@@ -1,0 +1,29 @@
+{
+  "manifest_version": 3,
+  "name": "KSS Accessibility Live Monitor",
+  "version": "0.1.0",
+  "description": "Authorised visible-page monitor for accessibility operations.",
+  "icons": {
+    "16": "icon.svg",
+    "48": "icon.svg",
+    "128": "icon.svg"
+  },
+  "permissions": ["activeTab", "notifications", "storage"],
+  "host_permissions": ["<all_urls>"],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_title": "KSS Accessibility Monitor",
+    "default_popup": "popup.html",
+    "default_icon": "icon.svg"
+  },
+  "options_page": "options.html",
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content-script.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}

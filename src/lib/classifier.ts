@@ -1,0 +1,178 @@
+import { createHash } from "node:crypto";
+import { seedKeywords, seedLocations } from "@/lib/seed";
+import type { ClassificationResult, Severity, SiteLocation } from "@/lib/types";
+
+const severityOrder: Record<Severity, number> = {
+  Low: 1,
+  Medium: 2,
+  High: 3,
+  Critical: 4,
+};
+
+const phonePattern =
+  /(?:(?:\+44\s?|0)(?:\d[\s-]?){9,10})|(?:\b\d{5}\s?\d{6}\b)/g;
+const emailPattern = /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi;
+const socialHandlePattern = /(^|\s)@[a-z0-9_.-]{2,}/gi;
+const profileUrlPattern =
+  /https?:\/\/(?:www\.)?(?:facebook|instagram|x|twitter|tiktok|threads)\.com\/[^\s]+/gi;
+const explicitNamePattern =
+  /\b(name|called|contact name)\s*[:\-]\s*[A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,3}/g;
+
+const specialCategoryTerms = [
+  "accessibility",
+  "disabled",
+  "disability",
+  "wheelchair",
+  "autistic",
+  "autism",
+  "adhd",
+  "anxiety",
+  "panic attack",
+  "insulin",
+  "medication",
+  "medical",
+  "carer",
+  "pa wristband",
+  "assistance",
+];
+
+const safeguardingMedicalTerms = [
+  "medical emergency",
+  "need medic",
+  "medic",
+  "fallen",
+  "injured",
+  "insulin",
+  "medication fridge",
+  "vulnerable",
+  "abandoned",
+  "missing person",
+  "safeguarding",
+  "panic attack",
+  "distressed",
+];
+
+function normalise(value: string) {
+  return value
+    .toLowerCase()
+    .replace(/[’`]/g, "'")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function containsPhrase(text: string, phrase: string) {
+  const target = normalise(phrase);
+  if (text.includes(target)) {
+    return true;
+  }
+
+  if (target.includes("can't")) {
+    return text.includes(target.replace("can't", "can not"));
+  }
+
+  return false;
+}
+
+function maxSeverity(current: Severity, next: Severity) {
+  return severityOrder[next] > severityOrder[current] ? next : current;
+}
+
+function matches(pattern: RegExp, value: string) {
+  pattern.lastIndex = 0;
+  return pattern.test(value);
+}
+
+export function isAtLeastSeverity(value: Severity, floor: Severity) {
+  return severityOrder[value] >= severityOrder[floor];
+}
+
+export function hashText(value: string) {
+  return createHash("sha256")
+    .update(normalise(value))
+    .digest("hex");
+}
+
+export function redactOperationalText(value: string) {
+  return value
+    .replace(profileUrlPattern, "[redacted profile URL]")
+    .replace(emailPattern, "[redacted email]")
+    .replace(phonePattern, "[redacted phone]")
+    .replace(explicitNamePattern, "$1: [redacted name]")
+    .replace(socialHandlePattern, "$1[redacted handle]");
+}
+
+export function detectPersonalData(value: string) {
+  return (
+    matches(phonePattern, value) ||
+    matches(emailPattern, value) ||
+    matches(socialHandlePattern, value) ||
+    matches(profileUrlPattern, value) ||
+    matches(explicitNamePattern, value)
+  );
+}
+
+export function detectLocation(
+  value: string,
+  locations: SiteLocation[] = seedLocations,
+) {
+  const text = normalise(value);
+  return (
+    locations.find((location) => text.includes(normalise(location.name))) ??
+    locations.find((location) =>
+      normalise(location.name)
+        .split(/\s+/)
+        .filter((part) => part.length > 2)
+        .every((part) => text.includes(part)),
+    ) ??
+    null
+  );
+}
+
+export function classifyText(
+  value: string,
+  locations: SiteLocation[] = seedLocations,
+): ClassificationResult {
+  const text = normalise(value);
+  const matched = seedKeywords.filter(
+    (entry) => entry.active && containsPhrase(text, entry.keyword),
+  );
+
+  let severity: Severity = "Low";
+  let category = matched[0]?.category ?? "Unclassified";
+
+  for (const match of matched) {
+    const previousSeverity: Severity = severity;
+    severity = maxSeverity(severity, match.severity);
+    if (severity !== previousSeverity) {
+      category = match.category;
+    }
+  }
+
+  const specialCategoryRisk = specialCategoryTerms.some((term) =>
+    containsPhrase(text, term),
+  );
+  const safeguardingOrMedicalFlag = safeguardingMedicalTerms.some((term) =>
+    containsPhrase(text, term),
+  );
+  const personalDataPresent = detectPersonalData(value);
+  const location = detectLocation(value, locations);
+  const matchedKeywords = [...new Set(matched.map((entry) => entry.keyword))];
+  const primaryKeyword = matchedKeywords[0] ?? "manual review";
+
+  return {
+    title: `${severity}: ${primaryKeyword}`,
+    category,
+    severity,
+    matched_keywords: matchedKeywords,
+    location_name: location?.name ?? null,
+    redacted_text: redactOperationalText(value),
+    personal_data_present: personalDataPresent,
+    special_category_risk: specialCategoryRisk,
+    safeguarding_or_medical_flag: safeguardingOrMedicalFlag,
+  };
+}
+
+export function summariseForTitle(value: string) {
+  const clean = redactOperationalText(value).replace(/\s+/g, " ").trim();
+  return clean.length > 80 ? `${clean.slice(0, 77)}...` : clean;
+}

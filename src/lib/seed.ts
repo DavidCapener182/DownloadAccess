@@ -1,0 +1,260 @@
+import type {
+  MonitoredKeyword,
+  Profile,
+  Severity,
+  SiteLocation,
+  Source,
+} from "@/lib/types";
+
+const createdAt = "2026-05-24T12:00:00.000Z";
+
+function keyword(
+  id: string,
+  phrase: string,
+  severity: Severity,
+  category: string,
+): MonitoredKeyword {
+  return {
+    id,
+    keyword: phrase,
+    category,
+    severity,
+    active: true,
+    created_at: createdAt,
+  };
+}
+
+export const seedKeywords: MonitoredKeyword[] = [
+  keyword("kw-critical-01", "wheelchair stuck", "Critical", "Mobility access"),
+  keyword("kw-critical-02", "stuck in mud", "Critical", "Ground condition"),
+  keyword("kw-critical-03", "cannot get out", "Critical", "Mobility access"),
+  keyword("kw-critical-04", "can't get out", "Critical", "Mobility access"),
+  keyword("kw-critical-05", "medical emergency", "Critical", "Medical"),
+  keyword("kw-critical-06", "need medic", "Critical", "Medical"),
+  keyword("kw-critical-07", "insulin", "Critical", "Medical"),
+  keyword("kw-critical-08", "medication fridge", "Critical", "Medical"),
+  keyword("kw-critical-09", "fallen", "Critical", "Injury"),
+  keyword("kw-critical-10", "injured", "Critical", "Injury"),
+  keyword("kw-critical-11", "unsafe", "Critical", "Safety"),
+  keyword("kw-critical-12", "vulnerable", "Critical", "Safeguarding"),
+  keyword("kw-critical-13", "abandoned", "Critical", "Safeguarding"),
+  keyword("kw-critical-14", "missing person", "Critical", "Safeguarding"),
+  keyword("kw-critical-15", "safeguarding", "Critical", "Safeguarding"),
+  keyword("kw-critical-16", "panic attack", "Critical", "Welfare"),
+  keyword("kw-critical-17", "distressed", "Critical", "Welfare"),
+  keyword("kw-critical-18", "blocked access", "Critical", "Access route"),
+  keyword("kw-critical-19", "no accessible access", "Critical", "Access route"),
+  keyword(
+    "kw-high-01",
+    "accessible toilet blocked",
+    "High",
+    "Accessible toilet",
+  ),
+  keyword(
+    "kw-high-02",
+    "accessible toilet overflowing",
+    "High",
+    "Accessible toilet",
+  ),
+  keyword("kw-high-03", "no accessible toilet", "High", "Accessible toilet"),
+  keyword(
+    "kw-high-04",
+    "accessible shower broken",
+    "High",
+    "Accessible shower",
+  ),
+  keyword("kw-high-05", "blue badge issue", "High", "Parking"),
+  keyword("kw-high-06", "carer pass issue", "High", "Ticketing"),
+  keyword("kw-high-07", "PA wristband issue", "High", "Ticketing"),
+  keyword("kw-high-08", "charging point broken", "High", "Power"),
+  keyword("kw-high-09", "shuttle not arrived", "High", "Transport"),
+  keyword("kw-high-10", "cannot reach campsite", "High", "Transport"),
+  keyword("kw-high-11", "trackway problem", "High", "Ground condition"),
+  keyword("kw-high-12", "ground condition", "High", "Ground condition"),
+  keyword("kw-high-13", "viewing platform issue", "High", "Viewing platform"),
+  keyword("kw-high-14", "queue too long", "High", "Queue"),
+  keyword("kw-high-15", "left waiting", "High", "Queue"),
+  keyword("kw-medium-01", "confusing signage", "Medium", "Signage"),
+  keyword("kw-medium-02", "information request", "Medium", "Information"),
+  keyword("kw-medium-03", "long queue", "Medium", "Queue"),
+  keyword("kw-medium-04", "delay", "Medium", "Delay"),
+  keyword("kw-medium-05", "staff did not know", "Medium", "Staff briefing"),
+  keyword("kw-medium-06", "access route unclear", "Medium", "Access route"),
+  keyword("kw-medium-07", "parking confusion", "Medium", "Parking"),
+  keyword("kw-medium-08", "campsite facilities", "Medium", "Facilities"),
+  keyword("kw-medium-09", "complaint", "Medium", "Complaint"),
+  keyword("kw-low-01", "feedback", "Low", "Feedback"),
+  keyword("kw-low-02", "suggestion", "Low", "Feedback"),
+  keyword("kw-low-03", "general question", "Low", "Information"),
+];
+
+function location(
+  id: string,
+  name: string,
+  description: string,
+): SiteLocation {
+  return {
+    id,
+    name,
+    description,
+    active: true,
+    created_at: createdAt,
+  };
+}
+
+export const seedLocations: SiteLocation[] = [
+  location(
+    "loc-access-campsite-a",
+    "Accessibility Campsite A",
+    "Primary accessibility camping area.",
+  ),
+  location(
+    "loc-access-campsite-b",
+    "Accessibility Campsite B",
+    "Overflow accessibility camping area.",
+  ),
+  location(
+    "loc-blue-badge-parking",
+    "Blue Badge Parking",
+    "Accessible parking and vehicle movement.",
+  ),
+  location(
+    "loc-accessible-car-park",
+    "Accessible Car Park",
+    "General accessible car park operations.",
+  ),
+  location("loc-shuttle-stop", "Shuttle Stop", "Accessible shuttle pick-up."),
+  location(
+    "loc-main-arena-viewing-platform",
+    "Main Arena Viewing Platform",
+    "Main arena accessible viewing platform.",
+  ),
+  location(
+    "loc-accessible-toilets-north",
+    "Accessible Toilets North",
+    "Northern accessible toilet block.",
+  ),
+  location(
+    "loc-accessible-toilets-south",
+    "Accessible Toilets South",
+    "Southern accessible toilet block.",
+  ),
+  location(
+    "loc-accessible-showers",
+    "Accessible Showers",
+    "Accessible shower units.",
+  ),
+  location("loc-trackway-east", "Trackway East", "Eastern trackway route."),
+  location("loc-trackway-west", "Trackway West", "Western trackway route."),
+  location("loc-gate-a", "Gate A", "Festival gate A."),
+  location("loc-gate-b", "Gate B", "Festival gate B."),
+  location("loc-medical-tent", "Medical Tent", "Medical support tent."),
+  location("loc-welfare", "Campsite Welfare", "Welfare and safeguarding point."),
+  location("loc-box-office", "Box Office", "Ticketing and wristband support."),
+];
+
+export const seedProfiles: Profile[] = [
+  {
+    id: "profile-duty-manager",
+    full_name: "Duty Manager",
+    role: "Duty Manager",
+    active: true,
+    created_at: createdAt,
+  },
+  {
+    id: "profile-control-room",
+    full_name: "Control Room",
+    role: "Control Room Operator",
+    active: true,
+    created_at: createdAt,
+  },
+  {
+    id: "profile-field-supervisor",
+    full_name: "Field Supervisor",
+    role: "Field Supervisor",
+    active: true,
+    created_at: createdAt,
+  },
+];
+
+export const seedSources: Source[] = [
+  {
+    id: "source-facebook-download-access",
+    name: "Download Festival Access Facebook group",
+    source_type: "Facebook Group",
+    platform: "Facebook",
+    url: "https://www.facebook.com/groups/downloadfestivalaccess",
+    active: true,
+    approved_for_monitoring: true,
+    notes:
+      "Approved group URL for authorised visible-page Chrome extension monitoring only. No bot login, hidden scraping, group crawling or profile harvesting.",
+    created_at: createdAt,
+  },
+  {
+    id: "source-chrome-extension",
+    name: "Authorised Chrome monitor",
+    source_type: "Chrome Extension",
+    platform: "Browser",
+    url: null,
+    active: true,
+    approved_for_monitoring: true,
+    notes:
+      "Runs only for approved pages opened by authorised staff. Does not bypass login or open hidden content.",
+    created_at: createdAt,
+  },
+  {
+    id: "source-qr-report",
+    name: "Accessibility QR report form",
+    source_type: "Direct QR Report",
+    platform: "KSS form",
+    url: "/report",
+    active: true,
+    approved_for_monitoring: true,
+    notes: "Direct structured reports from accessibility campsite users.",
+    created_at: createdAt,
+  },
+  {
+    id: "source-official-download",
+    name: "Official Download Festival updates",
+    source_type: "Official Update",
+    platform: "Download Festival",
+    url: "https://downloadfestival.co.uk",
+    active: true,
+    approved_for_monitoring: true,
+    notes: "Public official updates only.",
+    created_at: createdAt,
+  },
+  {
+    id: "source-rss",
+    name: "Approved RSS and public web",
+    source_type: "RSS",
+    platform: "Public web",
+    url: null,
+    active: true,
+    approved_for_monitoring: true,
+    notes: "Public feeds only. No unofficial Facebook or Reddit scraping.",
+    created_at: createdAt,
+  },
+  {
+    id: "source-weather",
+    name: "Weather warnings",
+    source_type: "Weather",
+    platform: "Public weather",
+    url: null,
+    active: true,
+    approved_for_monitoring: true,
+    notes: "Public weather warning sources.",
+    created_at: createdAt,
+  },
+  {
+    id: "source-reddit-approved",
+    name: "Reddit approved API source",
+    source_type: "Public API",
+    platform: "Reddit",
+    url: null,
+    active: false,
+    approved_for_monitoring: false,
+    notes: "Enable only after approved API credentials are provided.",
+    created_at: createdAt,
+  },
+];
