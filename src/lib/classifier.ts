@@ -66,6 +66,9 @@ const informationContextPatterns = [
   /\b(i am|i'm)\s+(nervous|worried|anxious)\s+about\s+(coming|attending|going)\b/i,
 ];
 
+const negatedUrgencyPattern =
+  /\b(not urgent|is not urgent|isn't urgent|not currently|not happening now|planning ahead|just planning)\b/i;
+
 const securityTerms = [
   "security",
   "fight",
@@ -181,7 +184,9 @@ export function classifyText(
   const safeguardingOrMedicalFlag = safeguardingMedicalTerms.some((term) =>
     containsPhrase(text, term),
   );
-  const urgentNow = urgentNowPatterns.some((pattern) => pattern.test(value));
+  const urgentNow =
+    !negatedUrgencyPattern.test(value) &&
+    urgentNowPatterns.some((pattern) => pattern.test(value));
   const informationContext =
     !urgentNow && informationContextPatterns.some((pattern) => pattern.test(value));
   const personalDataPresent = detectPersonalData(value);

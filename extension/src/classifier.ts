@@ -92,6 +92,8 @@ const informationContextPatterns = [
   /\b(first time|wondering|does anyone|has anyone|any advice|any tips|experience of|how do you manage|what should i expect)\b/i,
   /\b(i am|i'm)\s+(nervous|worried|anxious)\s+about\s+(coming|attending|going)\b/i,
 ];
+const negatedUrgencyPattern =
+  /\b(not urgent|is not urgent|isn't urgent|not currently|not happening now|planning ahead|just planning)\b/i;
 
 function normalise(value: string) {
   return value
@@ -127,7 +129,9 @@ export function classifyVisibleText(value: string) {
     }
   }
 
-  const urgentNow = urgentNowPatterns.some((pattern) => pattern.test(value));
+  const urgentNow =
+    !negatedUrgencyPattern.test(value) &&
+    urgentNowPatterns.some((pattern) => pattern.test(value));
   const informationContext =
     !urgentNow && informationContextPatterns.some((pattern) => pattern.test(value));
 
