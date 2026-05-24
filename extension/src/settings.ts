@@ -1,8 +1,8 @@
 import type { ExtensionSettings, StoredState } from "./types";
 
 export const defaultSettings: ExtensionSettings = {
-  apiUrl: "http://localhost:3000",
-  apiToken: "dev-extension-token",
+  apiUrl: "https://kss-accessibility-live-monitor.vercel.app",
+  apiToken: "",
   sourceId: "source-facebook-download-access",
   sourceName: "Download Festival Access Facebook group",
   allowedDomains: [],

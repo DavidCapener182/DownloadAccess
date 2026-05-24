@@ -29,24 +29,27 @@ async function handleMessage(message: {
   type: string;
   issue?: DetectedIssue;
   issueId?: string;
+  submitNow?: boolean;
 }) {
   if (message.type === "DETECTED_ISSUE" && message.issue) {
     const issue = await storeDetection(message.issue);
-    if (issue.severity === "Critical") {
+    if (message.submitNow || issue.severity === "Critical") {
       await submitDetection(issue.id);
-      chrome.notifications.create({
-        type: "basic",
-        iconUrl: chrome.runtime.getURL("icon.svg"),
-        title: "Critical accessibility issue",
-        message: issue.redactedText.slice(0, 180),
-      });
+      if (issue.severity === "Critical") {
+        chrome.notifications.create({
+          type: "basic",
+          iconUrl: chrome.runtime.getURL("icon.svg"),
+          title: "Critical accessibility issue",
+          message: issue.redactedText.slice(0, 180),
+        });
+      }
     }
-    return { ok: true };
+    return { ok: true, submitted: Boolean(issue.submittedAt) };
   }
 
   if (message.type === "SUBMIT_DETECTION" && message.issueId) {
     await submitDetection(message.issueId);
-    return { ok: true };
+    return { ok: true, submitted: true };
   }
 
   if (message.type === "GET_RECENT") {

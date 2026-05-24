@@ -29,3 +29,12 @@ export type DetectedIssue = {
 export type StoredState = Partial<ExtensionSettings> & {
   recentDetections?: DetectedIssue[];
 };
+
+export type BackfillResult = {
+  ok: boolean;
+  scanned: number;
+  matched: number;
+  submitted: number;
+  queued: number;
+  error?: string;
+};

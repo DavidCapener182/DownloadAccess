@@ -1,13 +1,20 @@
 import React, { useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { getSettings, normalisePageUrl, pageAllowed, saveSettings } from "./settings";
-import type { DetectedIssue, ExtensionSettings, StoredState } from "./types";
+import type {
+  BackfillResult,
+  DetectedIssue,
+  ExtensionSettings,
+  StoredState,
+} from "./types";
 
 function Popup() {
   const [settings, setSettings] = useState<ExtensionSettings | null>(null);
   const [recent, setRecent] = useState<DetectedIssue[]>([]);
   const [host, setHost] = useState("");
   const [currentPage, setCurrentPage] = useState("");
+  const [backfillResult, setBackfillResult] = useState<BackfillResult | null>(null);
+  const [backfillBusy, setBackfillBusy] = useState(false);
 
   useEffect(() => {
     void refresh();
@@ -35,6 +42,39 @@ function Popup() {
     settings.allowedDomains,
     settings.allowedPageUrls,
   );
+
+  async function backfillVisiblePosts() {
+    setBackfillBusy(true);
+    setBackfillResult(null);
+
+    try {
+      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+      if (!tab.id) {
+        throw new Error("No active tab found.");
+      }
+
+      const response = (await chrome.tabs.sendMessage(tab.id, {
+        type: "BACKFILL_VISIBLE",
+      })) as BackfillResult;
+
+      setBackfillResult(response);
+      await refresh();
+    } catch (error) {
+      setBackfillResult({
+        ok: false,
+        scanned: 0,
+        matched: 0,
+        submitted: 0,
+        queued: 0,
+        error:
+          error instanceof Error
+            ? error.message
+            : "Reload the Facebook page and try again.",
+      });
+    } finally {
+      setBackfillBusy(false);
+    }
+  }
 
   return (
     <Shell>
@@ -85,6 +125,26 @@ function Popup() {
             : "Auto-Send Critical Only"}
         </button>
       </div>
+
+      <button
+        className="primary full"
+        disabled={!enabled || settings.paused || backfillBusy}
+        onClick={backfillVisiblePosts}
+      >
+        {backfillBusy ? "Scanning loaded posts..." : "Backfill visible loaded posts"}
+      </button>
+      <p className="hint">
+        Open the authorised Facebook group, scroll to load the posts you want,
+        then click this. Medium, High and Critical matches are submitted; Low
+        matches stay here for review.
+      </p>
+      {backfillResult ? (
+        <div className={backfillResult.ok ? "status" : "status error"}>
+          {backfillResult.ok
+            ? `Scanned ${backfillResult.scanned}, matched ${backfillResult.matched}, submitted ${backfillResult.submitted}, queued ${backfillResult.queued}.`
+            : backfillResult.error}
+        </div>
+      ) : null}
 
       <a className="link" href={chrome.runtime.getURL("options.html")} target="_blank">
         Options
@@ -141,9 +201,13 @@ const styles = `
   .header { display: flex; flex-direction: column; gap: 2px; margin-bottom: 10px; }
   .header span, small, .empty { color: #66778d; }
   button, .link { display: inline-flex; min-height: 36px; align-items: center; justify-content: center; border-radius: 6px; border: 1px solid #d5dee9; padding: 0 10px; font-weight: 600; cursor: pointer; text-decoration: none; box-sizing: border-box; }
+  button:disabled { cursor: not-allowed; opacity: 0.5; }
   .primary { width: 100%; border-color: #0f766e; background: #0f766e; color: white; }
   .secondary, .link { background: white; color: #102033; }
   .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 8px; }
+  .full { margin-top: 8px; }
+  .hint { margin: 8px 0 0; color: #66778d; font-size: 12px; line-height: 1.4; }
+  .status { margin-top: 8px; border: 1px solid #a7f3d0; border-radius: 6px; background: #ecfdf5; color: #064e3b; padding: 8px; font-size: 12px; line-height: 1.4; }
   .link { width: 100%; margin-top: 8px; }
   h2 { margin: 14px 0 8px; font-size: 13px; }
   .list { display: grid; gap: 8px; }

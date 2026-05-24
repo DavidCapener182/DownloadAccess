@@ -5,6 +5,7 @@ const controls = [
   "Manual Review Mode",
   "Auto-Send Critical Only",
   "Pause Monitoring",
+  "Backfill visible loaded posts",
   "Allowed Facebook group/page URLs",
   "Allowed domains",
   "Dashboard API URL",
@@ -49,6 +50,13 @@ export default function ExtensionPage() {
                 Medium and higher keyword matches are submitted to the API.
                 Low matches remain in the extension for optional review. Critical
                 matches send immediately and show a Chrome notification.
+              </p>
+              <p>
+                To backfill, open the authorised Facebook group, scroll until the
+                posts you need are loaded, then use{" "}
+                <strong>Backfill visible loaded posts</strong> in the extension
+                popup. It scans only the DOM already visible or loaded in that
+                attended browser tab.
               </p>
               <p>
                 Build the unpacked extension with <code>npm run extension:build</code>
