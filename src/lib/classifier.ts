@@ -82,6 +82,111 @@ const securityTerms = [
   "violence",
 ];
 
+const topicSignals: Array<{
+  category: string;
+  severity: Severity;
+  relevance: ClassificationResult["relevance"];
+  terms: string[];
+}> = [
+  {
+    category: "Security",
+    severity: "Medium",
+    relevance: "Needs review",
+    terms: [
+      "security",
+      "fight",
+      "assault",
+      "harassment",
+      "threat",
+      "threatening",
+      "aggressive",
+      "stolen",
+      "theft",
+      "violence",
+    ],
+  },
+  {
+    category: "KSS / external",
+    severity: "Medium",
+    relevance: "Needs review",
+    terms: [
+      "kss",
+      "access team",
+      "download access team",
+      "guest services",
+      "steward",
+      "stewards",
+      "staff",
+      "box office",
+      "welfare tent",
+    ],
+  },
+  {
+    category: "Access admin",
+    severity: "Low",
+    relevance: "Needs review",
+    terms: [
+      "essential companion",
+      "companion ticket",
+      "carer",
+      "carer pass",
+      "pa wristband",
+      "wristband",
+      "access package",
+      "access application",
+      "disabled child",
+    ],
+  },
+  {
+    category: "Travel / parking",
+    severity: "Low",
+    relevance: "Needs review",
+    terms: [
+      "access carpark",
+      "access car park",
+      "car park",
+      "carpark",
+      "parking",
+      "drop off",
+      "pick up",
+      "traffic",
+      "drive in",
+      "monday morning",
+    ],
+  },
+  {
+    category: "Campsite",
+    severity: "Low",
+    relevance: "Needs review",
+    terms: ["access camp", "camping in access", "camp a", "camp b", "pitch up"],
+  },
+  {
+    category: "Facilities",
+    severity: "Low",
+    relevance: "Needs review",
+    terms: ["toilet", "shower", "charging", "fridge", "trackway"],
+  },
+  {
+    category: "Welfare",
+    severity: "Low",
+    relevance: "Information",
+    terms: ["panic", "anxiety", "overwhelmed", "worried", "nervous", "ptsd"],
+  },
+  {
+    category: "Information",
+    severity: "Low",
+    relevance: "Information",
+    terms: [
+      "packing",
+      "what are you bringing",
+      "how long",
+      "first time",
+      "wondering",
+      "any advice",
+    ],
+  },
+];
+
 function normalise(value: string) {
   return value
     .toLowerCase()
@@ -193,16 +298,27 @@ export function classifyText(
   const location = detectLocation(value, locations);
   const matchedKeywords = [...new Set(matched.map((entry) => entry.keyword))];
   const hasSecuritySignal = securityTerms.some((term) => containsPhrase(text, term));
+  const topicSignal = topicSignals.find((signal) =>
+    signal.terms.some((term) => containsPhrase(text, term)),
+  );
 
   if (hasSecuritySignal && category === "Unclassified") {
     category = "Security";
     severity = maxSeverity(severity, "Medium");
   }
 
+  if (!matchedKeywords.length && topicSignal) {
+    category = topicSignal.category;
+    severity = maxSeverity(severity, topicSignal.severity);
+  }
+
   let relevance: ClassificationResult["relevance"] = "Needs review";
   let reason = "Keyword match needs control-room review.";
 
-  if (!matchedKeywords.length && !hasSecuritySignal) {
+  if (!matchedKeywords.length && !hasSecuritySignal && topicSignal) {
+    relevance = topicSignal.relevance;
+    reason = `${topicSignal.category} topic flag found; review for operational relevance.`;
+  } else if (!matchedKeywords.length && !hasSecuritySignal) {
     relevance = "Not relevant";
     reason = "No monitored operational keyword was found.";
   } else if (informationContext) {
@@ -221,7 +337,8 @@ export function classifyText(
   const primaryKeyword =
     relevance === "Information"
       ? "information request"
-      : matchedKeywords[0] ?? (hasSecuritySignal ? "security" : "manual review");
+      : matchedKeywords[0] ??
+        (hasSecuritySignal ? "security" : topicSignal?.category ?? "manual review");
 
   return {
     title: `${severity}: ${primaryKeyword}`,

@@ -75,6 +75,10 @@ export interface DataStore {
   ): Promise<CaseAction>;
   createPublicReport(report: NewPublicReport): Promise<PublicReport>;
   acknowledgeAlert(id: string, userId?: string | null): Promise<Alert | null>;
+  deleteSourceEvent(
+    id: string,
+  ): Promise<{ source_event: SourceEvent | null; cases: CaseRecord[] }>;
+  deleteCase(id: string): Promise<CaseRecord | null>;
 }
 
 class MemoryStore implements DataStore {
@@ -296,6 +300,72 @@ class MemoryStore implements DataStore {
     this.audit("alert.acknowledged", "alerts", target.id, {
       user_id: target.acknowledged_by,
     });
+    return target;
+  }
+
+  async deleteSourceEvent(eventId: string) {
+    const target = this.sourceEvents.find((event) => event.id === eventId);
+    if (!target) {
+      return { source_event: null, cases: [] };
+    }
+
+    const linkedCaseIds = new Set<string>();
+    if (target.converted_case_id) {
+      linkedCaseIds.add(target.converted_case_id);
+    }
+
+    for (const record of this.cases) {
+      if (record.source_event_id === eventId) {
+        linkedCaseIds.add(record.id);
+      }
+    }
+
+    const deletedCases: CaseRecord[] = [];
+    for (const caseId of linkedCaseIds) {
+      const deletedCase = await this.deleteCase(caseId);
+      if (deletedCase) {
+        deletedCases.push(deletedCase);
+      }
+    }
+
+    this.sourceEvents = this.sourceEvents.filter((event) => event.id !== eventId);
+    this.audit("source_event.deleted", "source_events", target.id, {
+      deleted_case_ids: deletedCases.map((record) => record.id),
+    });
+
+    return { source_event: target, cases: deletedCases };
+  }
+
+  async deleteCase(caseId: string) {
+    const target = this.cases.find((record) => record.id === caseId);
+    if (!target) {
+      return null;
+    }
+
+    this.cases = this.cases.filter((record) => record.id !== caseId);
+    this.caseActions = this.caseActions.filter((action) => action.case_id !== caseId);
+    this.statusHistory = this.statusHistory.filter(
+      (history) => history.case_id !== caseId,
+    );
+    this.alerts = this.alerts.filter((alert) => alert.case_id !== caseId);
+
+    for (const event of this.sourceEvents) {
+      if (event.converted_case_id === caseId) {
+        event.converted_case_id = null;
+      }
+    }
+
+    for (const record of this.cases) {
+      if (record.duplicate_of === caseId) {
+        record.duplicate_of = null;
+      }
+    }
+
+    this.audit("case.deleted", "cases", target.id, {
+      source_event_id: target.source_event_id,
+      source_type: target.source_type,
+    });
+
     return target;
   }
 
@@ -774,6 +844,92 @@ class SupabaseStore implements DataStore {
       user_id: userId ?? null,
     });
     return data as Alert;
+  }
+
+  async deleteSourceEvent(eventId: string) {
+    const { data: event, error: eventError } = await this.table("source_events")
+      .select("*")
+      .eq("id", eventId)
+      .maybeSingle();
+
+    if (eventError) throw eventError;
+    if (!event) {
+      return { source_event: null, cases: [] };
+    }
+
+    const sourceEvent = event as SourceEvent;
+    const linkedCaseIds = new Set<string>();
+    if (sourceEvent.converted_case_id) {
+      linkedCaseIds.add(sourceEvent.converted_case_id);
+    }
+
+    const { data: linkedCases, error: linkedCasesError } = await this.table("cases")
+      .select("id")
+      .eq("source_event_id", eventId);
+    if (linkedCasesError) throw linkedCasesError;
+
+    for (const record of linkedCases ?? []) {
+      if (typeof record.id === "string") {
+        linkedCaseIds.add(record.id);
+      }
+    }
+
+    const deletedCases: CaseRecord[] = [];
+    for (const caseId of linkedCaseIds) {
+      const deletedCase = await this.deleteCase(caseId);
+      if (deletedCase) {
+        deletedCases.push(deletedCase);
+      }
+    }
+
+    const { error: deleteError } = await this.table("source_events")
+      .delete()
+      .eq("id", eventId);
+    if (deleteError) throw deleteError;
+
+    await this.audit("source_event.deleted", "source_events", eventId, {
+      deleted_case_ids: deletedCases.map((record) => record.id),
+    });
+
+    return { source_event: sourceEvent, cases: deletedCases };
+  }
+
+  async deleteCase(caseId: string) {
+    const { data: existing, error: existingError } = await this.table("cases")
+      .select("*")
+      .eq("id", caseId)
+      .maybeSingle();
+    if (existingError) throw existingError;
+    if (!existing) return null;
+
+    const caseRecord = existing as CaseRecord;
+
+    const { error: sourceEventError } = await this.table("source_events")
+      .update({ converted_case_id: null })
+      .eq("converted_case_id", caseId);
+    if (sourceEventError) throw sourceEventError;
+
+    const { error: reportError } = await this.table("public_reports")
+      .update({ converted_case_id: null })
+      .eq("converted_case_id", caseId);
+    if (reportError) throw reportError;
+
+    const { error: duplicateError } = await this.table("cases")
+      .update({ duplicate_of: null })
+      .eq("duplicate_of", caseId);
+    if (duplicateError) throw duplicateError;
+
+    const { error: deleteError } = await this.table("cases")
+      .delete()
+      .eq("id", caseId);
+    if (deleteError) throw deleteError;
+
+    await this.audit("case.deleted", "cases", caseId, {
+      source_event_id: caseRecord.source_event_id,
+      source_type: caseRecord.source_type,
+    });
+
+    return caseRecord;
   }
 
   private async selectMany<T>(table: string, orderBy: string, limit: number) {

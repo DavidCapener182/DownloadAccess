@@ -11,7 +11,10 @@ type StructuredPost = {
   postText: string;
   comments: string[];
   combinedText: string;
+  sourceUrl: string;
 };
+
+const backfillLimit = 20;
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message?.type !== "BACKFILL_VISIBLE") {
@@ -98,13 +101,13 @@ async function backfillVisiblePosts(): Promise<BackfillResult> {
 
   await start();
 
-  const candidates = collectCandidateContainers();
+  const candidates = collectCandidateContainers().slice(0, backfillLimit);
   let matched = 0;
   let submitted = 0;
   let queued = 0;
 
   for (const node of candidates) {
-    const result = await inspectNode(node, { submitMatched: true });
+    const result = await inspectNode(node, { submitAll: true });
     if (result === "submitted") {
       matched += 1;
       submitted += 1;
@@ -126,7 +129,7 @@ async function backfillVisiblePosts(): Promise<BackfillResult> {
 
 async function inspectNode(
   node: HTMLElement,
-  options: { submitMatched?: boolean } = {},
+  options: { submitAll?: boolean } = {},
 ): Promise<"submitted" | "queued" | "skipped"> {
   if (!isVisible(node)) {
     return "skipped";
@@ -154,7 +157,7 @@ async function inspectNode(
   }
 
   const classification = classifyVisibleText(text);
-  if (!classification.matched.length) {
+  if (!options.submitAll && !classification.matched.length) {
     return "skipped";
   }
 
@@ -169,17 +172,18 @@ async function inspectNode(
     severity: classification.severity,
     category: classification.category,
     matchedKeywords: classification.matched.map((item) => item.keyword),
-    sourceUrl: window.location.href,
+    sourceUrl: structured.sourceUrl,
     detectedAt: new Date().toISOString(),
   };
 
-  const submitNow = Boolean(options.submitMatched);
+  const submitNow = Boolean(options.submitAll);
 
   if (seen.has(id)) {
     if (submitNow) {
       const response = await chrome.runtime.sendMessage({
-        type: "SUBMIT_DETECTION",
-        issueId: id,
+        type: "DETECTED_ISSUE",
+        issue,
+        submitNow: true,
       });
       return response?.submitted ? "submitted" : "queued";
     }
@@ -255,6 +259,7 @@ function extractStructuredPost(node: HTMLElement): StructuredPost | null {
     postText: postText || combinedText,
     comments,
     combinedText,
+    sourceUrl: extractSourceUrl(container),
   };
 }
 
@@ -341,6 +346,18 @@ function buildTitle(value: string) {
     ?.trim();
   const title = firstSentence || value.trim();
   return title.length > 96 ? `${title.slice(0, 93)}...` : title;
+}
+
+function extractSourceUrl(container: HTMLElement) {
+  const link = container.querySelector<HTMLAnchorElement>(
+    'a[href*="/posts/"],a[href*="story_fbid"],a[href*="/groups/downloadfestivalaccess/permalink/"]',
+  );
+
+  try {
+    return link?.href ? new URL(link.href, window.location.origin).toString() : window.location.href;
+  } catch {
+    return window.location.href;
+  }
 }
 
 function uniqueText(values: string[]) {

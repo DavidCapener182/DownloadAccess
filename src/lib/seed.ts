@@ -94,6 +94,22 @@ export const seedKeywords: MonitoredKeyword[] = [
   keyword("kw-security-06", "aggressive", "Medium", "Security"),
   keyword("kw-security-07", "stolen", "Medium", "Security"),
   keyword("kw-security-08", "theft", "Medium", "Security"),
+  keyword("kw-kss-ext-01", "access team", "Medium", "KSS / external"),
+  keyword("kw-kss-ext-02", "guest services", "Medium", "KSS / external"),
+  keyword("kw-kss-ext-03", "steward", "Medium", "KSS / external"),
+  keyword("kw-kss-ext-04", "box office", "Medium", "KSS / external"),
+  keyword("kw-access-admin-01", "essential companion", "Low", "Access admin"),
+  keyword("kw-access-admin-02", "companion ticket", "Low", "Access admin"),
+  keyword("kw-access-admin-03", "access package", "Low", "Access admin"),
+  keyword("kw-access-admin-04", "access application", "Low", "Access admin"),
+  keyword("kw-travel-01", "access carpark", "Low", "Travel / parking"),
+  keyword("kw-travel-02", "access car park", "Low", "Travel / parking"),
+  keyword("kw-travel-03", "drop off", "Low", "Travel / parking"),
+  keyword("kw-travel-04", "pick up", "Low", "Travel / parking"),
+  keyword("kw-travel-05", "car park", "Low", "Travel / parking"),
+  keyword("kw-campsite-01", "access camp", "Low", "Campsite"),
+  keyword("kw-campsite-02", "camping in access", "Low", "Campsite"),
+  keyword("kw-info-01", "packing list", "Low", "Information"),
 ];
 
 function location(

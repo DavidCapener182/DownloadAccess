@@ -61,6 +61,22 @@ const rules: Rule[] = [
   ["aggressive", "Security", "Medium"],
   ["stolen", "Security", "Medium"],
   ["theft", "Security", "Medium"],
+  ["access team", "KSS / external", "Medium"],
+  ["guest services", "KSS / external", "Medium"],
+  ["steward", "KSS / external", "Medium"],
+  ["box office", "KSS / external", "Medium"],
+  ["essential companion", "Access admin", "Low"],
+  ["companion ticket", "Access admin", "Low"],
+  ["access package", "Access admin", "Low"],
+  ["access application", "Access admin", "Low"],
+  ["access carpark", "Travel / parking", "Low"],
+  ["access car park", "Travel / parking", "Low"],
+  ["drop off", "Travel / parking", "Low"],
+  ["pick up", "Travel / parking", "Low"],
+  ["car park", "Travel / parking", "Low"],
+  ["access camp", "Campsite", "Low"],
+  ["camping in access", "Campsite", "Low"],
+  ["packing list", "Information", "Low"],
 ].map(([keyword, category, severity]) => ({
   keyword,
   category,
@@ -94,6 +110,48 @@ const informationContextPatterns = [
 ];
 const negatedUrgencyPattern =
   /\b(not urgent|is not urgent|isn't urgent|not currently|not happening now|planning ahead|just planning)\b/i;
+
+const topicSignals: Array<{
+  category: string;
+  severity: Severity;
+  terms: string[];
+}> = [
+  {
+    category: "Security",
+    severity: "Medium",
+    terms: ["security", "fight", "assault", "harassment", "threat", "stolen", "theft"],
+  },
+  {
+    category: "KSS / external",
+    severity: "Medium",
+    terms: ["kss", "access team", "guest services", "steward", "box office", "staff"],
+  },
+  {
+    category: "Access admin",
+    severity: "Low",
+    terms: ["essential companion", "companion ticket", "wristband", "carer", "access package"],
+  },
+  {
+    category: "Travel / parking",
+    severity: "Low",
+    terms: ["car park", "carpark", "parking", "drop off", "pick up", "traffic", "drive"],
+  },
+  {
+    category: "Campsite",
+    severity: "Low",
+    terms: ["access camp", "camping in access", "pitch", "camp a", "camp b"],
+  },
+  {
+    category: "Welfare",
+    severity: "Low",
+    terms: ["panic", "anxiety", "overwhelmed", "worried", "nervous"],
+  },
+  {
+    category: "Information",
+    severity: "Low",
+    terms: ["packing", "what are you bringing", "how long", "first time", "wondering"],
+  },
+];
 
 function normalise(value: string) {
   return value
@@ -134,6 +192,14 @@ export function classifyVisibleText(value: string) {
     urgentNowPatterns.some((pattern) => pattern.test(value));
   const informationContext =
     !urgentNow && informationContextPatterns.some((pattern) => pattern.test(value));
+  const topic = topicSignals.find((signal) =>
+    signal.terms.some((term) => includesPhrase(text, term)),
+  );
+
+  if (!matched.length && topic) {
+    severity = topic.severity;
+    category = topic.category;
+  }
 
   if (informationContext && matched.length) {
     severity = "Low";

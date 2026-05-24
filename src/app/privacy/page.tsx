@@ -1,13 +1,8 @@
-import Link from "next/link";
-
 export default function PrivacyPage() {
   return (
-    <main className="min-h-screen bg-background px-4 py-8">
+    <main className="flex-1 bg-background px-4 py-8">
       <div className="mx-auto max-w-3xl rounded-lg border border-border bg-white p-6 shadow-sm">
-        <Link className="text-sm font-medium text-teal-800" href="/report">
-          Back to report
-        </Link>
-        <h1 className="mt-4 text-2xl font-semibold">Privacy notice placeholder</h1>
+        <h1 className="text-2xl font-semibold">Privacy notice placeholder</h1>
         <div className="mt-4 space-y-3 text-sm leading-6 text-slate-700">
           <p>
             KSS uses accessibility reports to identify and respond to operational

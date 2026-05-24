@@ -135,13 +135,13 @@ function Popup() {
       </button>
       <p className="hint">
         Open the authorised Facebook group, scroll to load the posts you want,
-        then click this. Matched posts are sent to dashboard review with comments;
-        only clearly actionable items become cases.
+        then click this. The latest 20 visible post cards are sent to dashboard
+        review with comments; only clearly actionable items become cases.
       </p>
       {backfillResult ? (
         <div className={backfillResult.ok ? "status" : "status error"}>
           {backfillResult.ok
-            ? `Scanned ${backfillResult.scanned}, matched ${backfillResult.matched}, submitted ${backfillResult.submitted}, queued ${backfillResult.queued}.`
+            ? `Scanned ${backfillResult.scanned}, sent ${backfillResult.submitted} to dashboard, queued ${backfillResult.queued} locally.`
             : backfillResult.error}
         </div>
       ) : null}
@@ -190,7 +190,7 @@ function Popup() {
             </div>
           ))
         ) : (
-          <p className="empty">No matches yet.</p>
+          <p className="empty">No posts captured yet.</p>
         )}
       </div>
     </Shell>

@@ -4,16 +4,19 @@ import {
   AlertTriangle,
   Bell,
   CheckCircle2,
+  Eye,
+  ExternalLink,
   FileDown,
   Megaphone,
+  MessageCircle,
+  PanelLeftOpen,
   QrCode,
-  Radio,
   RefreshCw,
   Send,
   ShieldAlert,
+  X,
   UserCheck,
 } from "lucide-react";
-import Link from "next/link";
 import type React from "react";
 import { useCallback, useEffect, useMemo, useState, useTransition } from "react";
 import { Badge, SeverityBadge } from "@/components/ui/badge";
@@ -26,6 +29,7 @@ import type {
   DashboardSnapshot,
   Profile,
   SiteLocation,
+  Source,
   SourceEvent,
 } from "@/lib/types";
 import { cn, formatDateTime, minutesBetween } from "@/lib/utils";
@@ -49,6 +53,19 @@ const statusOptions: CaseStatus[] = [
   "Ignored / Not Relevant",
 ];
 
+type PostFeedItem =
+  | {
+      kind: "event";
+      created_at: string;
+      event: SourceEvent;
+      caseRecord?: CaseRecord;
+    }
+  | {
+      kind: "case";
+      created_at: string;
+      caseRecord: CaseRecord;
+    };
+
 export function LiveMonitorDashboard({
   initialSnapshot,
 }: {
@@ -57,6 +74,7 @@ export function LiveMonitorDashboard({
   const [snapshot, setSnapshot] = useState(initialSnapshot);
   const [manualText, setManualText] = useState("");
   const [connectionError, setConnectionError] = useState<string | null>(null);
+  const [postsDrawerOpen, setPostsDrawerOpen] = useState(false);
   const [manualBusy, startManualTransition] = useTransition();
   const [refreshing, startRefreshTransition] = useTransition();
 
@@ -97,7 +115,21 @@ export function LiveMonitorDashboard({
       !event.converted_case_id &&
       !event.ignored,
   );
+  const postFeedCount = useMemo(
+    () => buildPostFeedItems(snapshot.source_events, snapshot.cases).length,
+    [snapshot.source_events, snapshot.cases],
+  );
   const summary = buildSummary(snapshot);
+
+  const moveToPostTarget = useCallback((targetId: string | null) => {
+    if (targetId) {
+      document.getElementById(targetId)?.scrollIntoView({
+        behavior: "smooth",
+        block: "start",
+      });
+    }
+    setPostsDrawerOpen(false);
+  }, []);
 
   const createManualCase = () => {
     startManualTransition(() => {
@@ -120,269 +152,273 @@ export function LiveMonitorDashboard({
   };
 
   return (
-    <div className="min-h-screen bg-background">
-      <header className="border-b border-border bg-white">
-        <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-3 px-4 py-4 sm:px-6 lg:px-8">
-          <div className="flex items-center gap-3">
-            <div className="flex h-10 w-10 items-center justify-center rounded-md bg-teal-700 text-white">
-              <Radio aria-hidden className="h-5 w-5" />
-            </div>
-            <div>
-              <p className="text-xs font-semibold uppercase tracking-wide text-teal-800">
-                Download Festival operations
-              </p>
-              <h1 className="text-xl font-semibold tracking-normal">
-                KSS Accessibility Live Monitor
-              </h1>
-            </div>
+    <main className="mx-auto w-full max-w-[96rem] flex-1 px-4 py-5 sm:px-6 lg:px-8">
+      {postsDrawerOpen ? (
+        <div className="fixed inset-0 z-50 xl:hidden">
+          <button
+            aria-label="Close posts feed"
+            className="absolute inset-0 bg-slate-950/45"
+            type="button"
+            onClick={() => setPostsDrawerOpen(false)}
+          />
+          <div className="absolute inset-y-0 left-0 flex w-[min(28rem,calc(100vw-2rem))] flex-col bg-background shadow-2xl">
+            <AllPostsFeed
+              cases={snapshot.cases}
+              events={snapshot.source_events}
+              onClose={() => setPostsDrawerOpen(false)}
+              onNavigate={moveToPostTarget}
+              sources={snapshot.sources}
+              variant="drawer"
+            />
           </div>
-          <nav className="flex flex-wrap items-center gap-2 text-sm">
-            <Link className="rounded-md px-3 py-2 font-medium hover:bg-muted" href="/">
-              Live
-            </Link>
-            <Link
-              className="rounded-md px-3 py-2 font-medium hover:bg-muted"
-              href="/report"
-            >
-              QR form
-            </Link>
-            <Link
-              className="rounded-md px-3 py-2 font-medium hover:bg-muted"
-              href="/extension"
-            >
-              Extension
-            </Link>
-            <Link
-              className="rounded-md px-3 py-2 font-medium hover:bg-muted"
-              href="/compliance"
-            >
-              Compliance
-            </Link>
-          </nav>
         </div>
-      </header>
+      ) : null}
 
-      <main className="mx-auto max-w-7xl px-4 py-5 sm:px-6 lg:px-8">
-        {criticalAlerts.length ? (
-          <CriticalBanner
-            alerts={criticalAlerts}
+      {criticalAlerts.length ? (
+        <CriticalBanner
+          alerts={criticalAlerts}
+          cases={snapshot.cases}
+          onAcknowledge={async (id) => {
+            await fetch(`/api/alerts/${id}/acknowledge`, { method: "POST" });
+            refresh();
+          }}
+        />
+      ) : null}
+
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <Metric label="Open cases" value={openCases.length.toString()} />
+        <Metric
+          label="Critical"
+          value={summary.criticalOpen.toString()}
+          intent={summary.criticalOpen ? "danger" : "default"}
+        />
+        <Metric label="High alerts" value={highAlerts.length.toString()} />
+        <Metric label="Latest signal" value={summary.latestSignal} compact />
+      </div>
+
+      {connectionError ? (
+        <div className="mt-3 flex items-center gap-2 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-950">
+          <AlertTriangle aria-hidden className="h-4 w-4 shrink-0" />
+          <span>{connectionError}</span>
+        </div>
+      ) : null}
+
+      <div className="mt-4 flex flex-wrap items-center justify-between gap-3 xl:hidden">
+        <div>
+          <h2 className="text-sm font-semibold">All monitored posts</h2>
+          <p className="mt-1 text-xs text-muted-foreground">
+            {postFeedCount} captured from approved sources
+          </p>
+        </div>
+        <Button
+          variant="secondary"
+          onClick={() => setPostsDrawerOpen(true)}
+          aria-expanded={postsDrawerOpen}
+        >
+          <PanelLeftOpen aria-hidden className="h-4 w-4" />
+          Posts
+        </Button>
+      </div>
+
+      <div className="mt-5 grid gap-5 xl:grid-cols-[300px_minmax(0,1.35fr)_minmax(320px,0.8fr)]">
+        <aside className="hidden xl:block">
+          <AllPostsFeed
             cases={snapshot.cases}
-            onAcknowledge={async (id) => {
-              await fetch(`/api/alerts/${id}/acknowledge`, { method: "POST" });
-              refresh();
-            }}
+            events={snapshot.source_events}
+            onNavigate={moveToPostTarget}
+            sources={snapshot.sources}
+            variant="rail"
           />
-        ) : null}
+        </aside>
 
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-          <Metric label="Open cases" value={openCases.length.toString()} />
-          <Metric
-            label="Critical"
-            value={summary.criticalOpen.toString()}
-            intent={summary.criticalOpen ? "danger" : "default"}
-          />
-          <Metric label="High alerts" value={highAlerts.length.toString()} />
-          <Metric label="Latest signal" value={summary.latestSignal} compact />
-        </div>
+        <div className="space-y-5">
+          <Card>
+            <CardHeader
+              title="Needs triage"
+              meta={`${reviewEvents.length} posts waiting for control-room review`}
+            />
+            <div className="divide-y divide-border">
+              {reviewEvents.length ? (
+                reviewEvents.map((event) => (
+                  <SourceEventRow
+                    key={event.id}
+                    event={event}
+                    onReview={async (payload) => {
+                      await fetch(`/api/source-events/${event.id}`, {
+                        method: "PATCH",
+                        headers: { "content-type": "application/json" },
+                        body: JSON.stringify(payload),
+                      });
+                      refresh();
+                    }}
+                  />
+                ))
+              ) : (
+                <div className="px-4 py-8 text-center text-sm text-muted-foreground">
+                  No source events waiting review.
+                </div>
+              )}
+            </div>
+          </Card>
 
-        {connectionError ? (
-          <div className="mt-3 flex items-center gap-2 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-950">
-            <AlertTriangle aria-hidden className="h-4 w-4 shrink-0" />
-            <span>{connectionError}</span>
-          </div>
-        ) : null}
+          <Card>
+            <CardHeader
+              title="Cases we are looking into"
+              meta={`${openCases.length} open, refreshed ${formatDateTime(snapshot.generated_at)}`}
+            >
+              <div className="flex items-center gap-2">
+                <Button variant="secondary" size="sm" onClick={exportCases(snapshot)}>
+                  <FileDown aria-hidden className="h-4 w-4" />
+                  CSV
+                </Button>
+                <Button variant="secondary" size="icon" onClick={refresh} title="Refresh feed">
+                  <RefreshCw
+                    aria-hidden
+                    className={cn("h-4 w-4", refreshing && "animate-spin")}
+                  />
+                </Button>
+              </div>
+            </CardHeader>
+            <div className="divide-y divide-border">
+              {openCases.length ? (
+                openCases.map((record) => (
+                  <CaseRow
+                    key={record.id}
+                    record={record}
+                    generatedAt={snapshot.generated_at}
+                    profiles={snapshot.profiles}
+                    locations={snapshot.locations}
+                    actions={snapshot.case_actions.filter(
+                      (action) => action.case_id === record.id,
+                    )}
+                    onUpdate={async (payload) => {
+                      await fetch(`/api/cases/${record.id}`, {
+                        method: "PATCH",
+                        headers: { "content-type": "application/json" },
+                        body: JSON.stringify(payload),
+                      });
+                      refresh();
+                    }}
+                    onAction={async (note) => {
+                      await fetch(`/api/cases/${record.id}/actions`, {
+                        method: "POST",
+                        headers: { "content-type": "application/json" },
+                        body: JSON.stringify({
+                          action_type: "Action taken",
+                          note,
+                        }),
+                      });
+                      refresh();
+                    }}
+                  />
+                ))
+              ) : (
+                <div className="px-4 py-12 text-center text-sm text-muted-foreground">
+                  No open cases.
+                </div>
+              )}
+            </div>
+          </Card>
 
-        <div className="mt-5 grid gap-5 xl:grid-cols-[minmax(0,1.45fr)_minmax(340px,0.85fr)]">
-          <div className="space-y-5">
-            <Card>
-              <CardHeader
-                title="Source review"
-                meta={`${reviewEvents.length} waiting for control-room triage`}
+          <Card>
+            <CardHeader title="Manual intake" meta="Control room entry" />
+            <div className="space-y-3 p-4">
+              <textarea
+                className="min-h-24 w-full rounded-md border border-border bg-white p-3 text-sm outline-none focus:ring-2 focus:ring-ring"
+                value={manualText}
+                onChange={(event) => setManualText(event.target.value)}
+                placeholder="Paste an operational issue summary..."
               />
-              <div className="divide-y divide-border">
-                {reviewEvents.length ? (
-                  reviewEvents.map((event) => (
-                    <SourceEventRow
-                      key={event.id}
-                      event={event}
-                      onReview={async (payload) => {
-                        await fetch(`/api/source-events/${event.id}`, {
-                          method: "PATCH",
-                          headers: { "content-type": "application/json" },
-                          body: JSON.stringify(payload),
-                        });
-                        refresh();
-                      }}
-                    />
-                  ))
-                ) : (
-                  <div className="px-4 py-8 text-center text-sm text-muted-foreground">
-                    No source events waiting review.
-                  </div>
-                )}
+              <div className="flex justify-end">
+                <Button
+                  disabled={manualBusy || manualText.trim().length < 3}
+                  onClick={createManualCase}
+                >
+                  <Send aria-hidden className="h-4 w-4" />
+                  Create case
+                </Button>
               </div>
-            </Card>
-
-            <Card>
-              <CardHeader
-                title="Live feed"
-                meta={`${openCases.length} open, refreshed ${formatDateTime(snapshot.generated_at)}`}
-              >
-                <div className="flex items-center gap-2">
-                  <Button variant="secondary" size="sm" onClick={exportCases(snapshot)}>
-                    <FileDown aria-hidden className="h-4 w-4" />
-                    CSV
-                  </Button>
-                  <Button variant="secondary" size="icon" onClick={refresh} title="Refresh feed">
-                    <RefreshCw
-                      aria-hidden
-                      className={cn("h-4 w-4", refreshing && "animate-spin")}
-                    />
-                  </Button>
-                </div>
-              </CardHeader>
-              <div className="divide-y divide-border">
-                {openCases.length ? (
-                  openCases.map((record) => (
-                    <CaseRow
-                      key={record.id}
-                      record={record}
-                      profiles={snapshot.profiles}
-                      locations={snapshot.locations}
-                      actions={snapshot.case_actions.filter(
-                        (action) => action.case_id === record.id,
-                      )}
-                      onUpdate={async (payload) => {
-                        await fetch(`/api/cases/${record.id}`, {
-                          method: "PATCH",
-                          headers: { "content-type": "application/json" },
-                          body: JSON.stringify(payload),
-                        });
-                        refresh();
-                      }}
-                      onAction={async (note) => {
-                        await fetch(`/api/cases/${record.id}/actions`, {
-                          method: "POST",
-                          headers: { "content-type": "application/json" },
-                          body: JSON.stringify({
-                            action_type: "Action taken",
-                            note,
-                          }),
-                        });
-                        refresh();
-                      }}
-                    />
-                  ))
-                ) : (
-                  <div className="px-4 py-12 text-center text-sm text-muted-foreground">
-                    No open cases.
-                  </div>
-                )}
-              </div>
-            </Card>
-
-            <Card>
-              <CardHeader title="Manual intake" meta="Control room entry" />
-              <div className="space-y-3 p-4">
-                <textarea
-                  className="min-h-24 w-full rounded-md border border-border bg-white p-3 text-sm outline-none focus:ring-2 focus:ring-ring"
-                  value={manualText}
-                  onChange={(event) => setManualText(event.target.value)}
-                  placeholder="Paste an operational issue summary..."
-                />
-                <div className="flex justify-end">
-                  <Button
-                    disabled={manualBusy || manualText.trim().length < 3}
-                    onClick={createManualCase}
-                  >
-                    <Send aria-hidden className="h-4 w-4" />
-                    Create case
-                  </Button>
-                </div>
-              </div>
-            </Card>
-          </div>
-
-          <aside className="space-y-5">
-            <Card>
-              <CardHeader title="Daily summary" meta="Operational readout" />
-              <div className="grid gap-3 p-4 text-sm">
-                <SummaryLine label="Top location" value={summary.topLocation} />
-                <SummaryLine label="Primary category" value={summary.topCategory} />
-                <SummaryLine label="Restricted cases" value={summary.restricted.toString()} />
-                <SummaryLine label="Duplicate signals" value={summary.duplicates.toString()} />
-              </div>
-            </Card>
-
-            <BreakdownCard
-              title="Cases by status"
-              items={groupCounts(snapshot.cases, "status")}
-            />
-            <BreakdownCard
-              title="Cases by severity"
-              items={groupCounts(snapshot.cases, "severity")}
-            />
-            <BreakdownCard
-              title="Cases by location"
-              items={groupLocationCounts(snapshot.cases, snapshot.locations)}
-            />
-            <BreakdownCard
-              title="Cases by source"
-              items={groupCounts(snapshot.cases, "source_type")}
-            />
-
-            <Card>
-              <CardHeader title="Source controls" meta="Approved routes only" />
-              <div className="space-y-3 p-4">
-                {snapshot.sources.map((source) => (
-                  <div
-                    key={source.id}
-                    className="flex items-start justify-between gap-3 rounded-md border border-border p-3"
-                  >
-                    <div>
-                      <p className="text-sm font-medium">{source.name}</p>
-                      <p className="text-xs text-muted-foreground">
-                        {source.platform} - {source.source_type}
-                      </p>
-                      {source.url ? (
-                        <a
-                          className="mt-1 block text-xs font-medium text-teal-800 underline"
-                          href={source.url}
-                          rel="noreferrer"
-                          target="_blank"
-                        >
-                          Open source
-                        </a>
-                      ) : null}
-                    </div>
-                    <Badge
-                      className={
-                        source.active && source.approved_for_monitoring
-                          ? "bg-teal-50 text-teal-900"
-                          : "bg-slate-100 text-slate-700"
-                      }
-                    >
-                      {source.active && source.approved_for_monitoring
-                        ? "Approved"
-                        : "Off"}
-                    </Badge>
-                  </div>
-                ))}
-              </div>
-            </Card>
-
-            <Card>
-              <CardHeader title="Privacy flags" meta="UK GDPR posture" />
-              <div className="space-y-3 p-4 text-sm">
-                <FlagLine icon={ShieldAlert} text="Original text is restricted data." />
-                <FlagLine icon={Bell} text="Medical and safeguarding terms are marked." />
-                <FlagLine icon={QrCode} text="Direct reports require consent." />
-              </div>
-            </Card>
-          </aside>
+            </div>
+          </Card>
         </div>
-      </main>
-    </div>
+
+        <aside className="space-y-5">
+          <Card>
+            <CardHeader title="Daily summary" meta="Operational readout" />
+            <div className="grid gap-3 p-4 text-sm">
+              <SummaryLine label="Top location" value={summary.topLocation} />
+              <SummaryLine label="Primary category" value={summary.topCategory} />
+              <SummaryLine label="Restricted cases" value={summary.restricted.toString()} />
+              <SummaryLine label="Duplicate signals" value={summary.duplicates.toString()} />
+            </div>
+          </Card>
+
+          <BreakdownCard
+            title="Cases by status"
+            items={groupCounts(snapshot.cases, "status")}
+          />
+          <BreakdownCard
+            title="Cases by severity"
+            items={groupCounts(snapshot.cases, "severity")}
+          />
+          <BreakdownCard
+            title="Cases by location"
+            items={groupLocationCounts(snapshot.cases, snapshot.locations)}
+          />
+          <BreakdownCard
+            title="Cases by source"
+            items={groupCounts(snapshot.cases, "source_type")}
+          />
+
+          <Card>
+            <CardHeader title="Source controls" meta="Approved routes only" />
+            <div className="space-y-3 p-4">
+              {snapshot.sources.map((source) => (
+                <div
+                  key={source.id}
+                  className="flex items-start justify-between gap-3 rounded-md border border-border p-3"
+                >
+                  <div>
+                    <p className="text-sm font-medium">{source.name}</p>
+                    <p className="text-xs text-muted-foreground">
+                      {source.platform} - {source.source_type}
+                    </p>
+                    {source.url ? (
+                      <a
+                        className="mt-1 block text-xs font-medium text-teal-800 underline"
+                        href={source.url}
+                        rel="noreferrer"
+                        target="_blank"
+                      >
+                        Open source
+                      </a>
+                    ) : null}
+                  </div>
+                  <Badge
+                    className={
+                      source.active && source.approved_for_monitoring
+                        ? "bg-teal-50 text-teal-900"
+                        : "bg-slate-100 text-slate-700"
+                    }
+                  >
+                    {source.active && source.approved_for_monitoring ? "Approved" : "Off"}
+                  </Badge>
+                </div>
+              ))}
+            </div>
+          </Card>
+
+          <Card>
+            <CardHeader title="Privacy flags" meta="UK GDPR posture" />
+            <div className="space-y-3 p-4 text-sm">
+              <FlagLine icon={ShieldAlert} text="Original text is restricted data." />
+              <FlagLine icon={Bell} text="Medical and safeguarding terms are marked." />
+              <FlagLine icon={QrCode} text="Direct reports require consent." />
+            </div>
+          </Card>
+        </aside>
+      </div>
+    </main>
   );
 }
 
@@ -466,6 +502,290 @@ function Metric({
   );
 }
 
+function AllPostsFeed({
+  cases,
+  events,
+  onClose,
+  onNavigate,
+  sources,
+  variant,
+}: {
+  cases: CaseRecord[];
+  events: SourceEvent[];
+  onClose?: () => void;
+  onNavigate: (targetId: string | null) => void;
+  sources: Source[];
+  variant: "drawer" | "rail";
+}) {
+  const sourceById = useMemo(
+    () => new Map(sources.map((source) => [source.id, source])),
+    [sources],
+  );
+  const feedItems = useMemo(() => buildPostFeedItems(events, cases), [events, cases]);
+  const needsAttention = feedItems.filter(postFeedItemNeedsAttention).length;
+
+  return (
+    <section
+      className={cn(
+        "flex min-h-0 flex-col overflow-hidden rounded-lg border border-border bg-card text-card-foreground shadow-sm",
+        variant === "rail"
+          ? "sticky top-24 max-h-[calc(100vh-7rem)]"
+          : "h-full rounded-none border-0 shadow-none",
+      )}
+    >
+      <div className="flex items-start justify-between gap-3 border-b border-border px-4 py-3">
+        <div>
+          <h2 className="text-sm font-semibold">All monitored posts</h2>
+          <p className="mt-1 text-xs text-muted-foreground">
+            {feedItems.length} captured - {needsAttention} need attention
+          </p>
+        </div>
+        {onClose ? (
+          <Button
+            aria-label="Close posts feed"
+            variant="secondary"
+            size="icon"
+            onClick={onClose}
+          >
+            <X aria-hidden className="h-4 w-4" />
+          </Button>
+        ) : null}
+      </div>
+
+      <div className="min-h-0 flex-1 overflow-y-auto p-3">
+        {feedItems.length ? (
+          <div className="space-y-3">
+            {feedItems.map((item) => {
+              const sourceId =
+                item.kind === "event"
+                  ? item.event.source_id ?? item.caseRecord?.source_id
+                  : item.caseRecord.source_id;
+              const key =
+                item.kind === "event"
+                  ? `event-${item.event.id}`
+                  : `case-${item.caseRecord.id}`;
+
+              return (
+                <SourcePostCard
+                  key={key}
+                  item={item}
+                  onNavigate={onNavigate}
+                  source={sourceId ? sourceById.get(sourceId) : undefined}
+                />
+              );
+            })}
+          </div>
+        ) : (
+          <div className="rounded-md border border-dashed border-border bg-white px-3 py-8 text-center text-sm text-muted-foreground">
+            No posts captured yet.
+          </div>
+        )}
+      </div>
+    </section>
+  );
+}
+
+function SourcePostCard({
+  item,
+  onNavigate,
+  source,
+}: {
+  item: PostFeedItem;
+  onNavigate: (targetId: string | null) => void;
+  source?: Source;
+}) {
+  const text =
+    item.kind === "event"
+      ? item.event.post_text || item.event.redacted_text
+      : item.caseRecord.post_text || item.caseRecord.redacted_text;
+  const title =
+    item.kind === "event"
+      ? item.event.post_title || item.event.predicted_category
+      : item.caseRecord.post_title || item.caseRecord.title;
+  const createdAt = item.created_at;
+  const category =
+    item.kind === "event" ? item.event.predicted_category : item.caseRecord.category;
+  const severity =
+    item.kind === "event" ? item.event.predicted_severity : item.caseRecord.severity;
+  const comments = item.kind === "event" ? item.event.comments : item.caseRecord.comments;
+  const sourceUrl = item.kind === "event" ? item.event.source_url : item.caseRecord.source_url;
+  const status = sourcePostStatus(item);
+  const target = sourcePostTarget(item);
+
+  return (
+    <article className="rounded-md border border-border bg-white p-3 shadow-sm">
+      <div className="flex gap-3">
+        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-teal-700 text-sm font-semibold text-white">
+          {sourceInitial(source)}
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="flex items-start justify-between gap-2">
+            <div className="min-w-0">
+              <h3 className="truncate text-sm font-semibold">
+                {title}
+              </h3>
+              <p className="mt-0.5 truncate text-xs text-muted-foreground">
+                {source?.name ?? sourceFallbackLabel(item)} - {formatDateTime(createdAt)}
+              </p>
+            </div>
+            <Badge className={cn("shrink-0", status.className)}>{status.label}</Badge>
+          </div>
+
+          <p className="mt-3 line-clamp-4 text-sm leading-5 text-slate-700">{text}</p>
+
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            <SeverityBadge severity={severity} />
+            <Badge>{category}</Badge>
+            {comments.length ? (
+              <span className="inline-flex h-6 items-center gap-1 rounded-md bg-slate-100 px-2 text-xs font-medium text-slate-700 ring-1 ring-border">
+                <MessageCircle aria-hidden className="h-3.5 w-3.5" />
+                {comments.length}
+              </span>
+            ) : null}
+          </div>
+
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            {target.id ? (
+              <Button variant="secondary" size="sm" onClick={() => onNavigate(target.id)}>
+                <Eye aria-hidden className="h-4 w-4" />
+                {target.label}
+              </Button>
+            ) : null}
+            {sourceUrl ? (
+              <a
+                className="inline-flex h-8 items-center gap-1 rounded-md px-2 text-xs font-medium text-teal-800 hover:bg-teal-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+                href={sourceUrl}
+                rel="noreferrer"
+                target="_blank"
+              >
+                <ExternalLink aria-hidden className="h-3.5 w-3.5" />
+                Source
+              </a>
+            ) : null}
+          </div>
+        </div>
+      </div>
+    </article>
+  );
+}
+
+function buildPostFeedItems(events: SourceEvent[], cases: CaseRecord[]): PostFeedItem[] {
+  const caseById = new Map(cases.map((record) => [record.id, record]));
+  const caseIdsAlreadyShown = new Set<string>();
+  const items: PostFeedItem[] = events.map((event) => {
+    const caseRecord = event.converted_case_id
+      ? caseById.get(event.converted_case_id)
+      : undefined;
+
+    if (caseRecord) {
+      caseIdsAlreadyShown.add(caseRecord.id);
+    }
+
+    return {
+      kind: "event",
+      created_at: event.created_at,
+      event,
+      caseRecord,
+    };
+  });
+
+  for (const record of cases) {
+    if (caseIdsAlreadyShown.has(record.id)) {
+      continue;
+    }
+
+    items.push({
+      kind: "case",
+      created_at: record.created_at,
+      caseRecord: record,
+    });
+  }
+
+  return items.sort(
+    (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime(),
+  );
+}
+
+function postFeedItemNeedsAttention(item: PostFeedItem) {
+  if (item.kind === "case") {
+    return openStatuses.includes(item.caseRecord.status);
+  }
+
+  if (!item.event.converted_case_id) {
+    return item.event.review_status === "New" && !item.event.ignored;
+  }
+
+  return Boolean(
+    item.caseRecord && openStatuses.includes(item.caseRecord.status),
+  );
+}
+
+function sourcePostStatus(item: PostFeedItem) {
+  const caseRecord = item.kind === "event" ? item.caseRecord : item.caseRecord;
+
+  if (caseRecord && openStatuses.includes(caseRecord.status)) {
+    return { label: "Looking into", className: "bg-teal-50 text-teal-900" };
+  }
+
+  if (caseRecord) {
+    return { label: caseRecord.status, className: "bg-slate-100 text-slate-700" };
+  }
+
+  if (item.kind === "case") {
+    return { label: item.caseRecord.status, className: "bg-slate-100 text-slate-700" };
+  }
+
+  const { event } = item;
+
+  if (event.ignored || event.review_status === "Ignored") {
+    return { label: "Ignored", className: "bg-slate-100 text-slate-700" };
+  }
+
+  if (event.review_status === "New") {
+    return { label: "Needs review", className: "bg-amber-100 text-amber-950" };
+  }
+
+  return { label: event.review_status, className: "bg-sky-100 text-sky-950" };
+}
+
+function sourcePostTarget(item: PostFeedItem) {
+  const caseRecord = item.kind === "event" ? item.caseRecord : item.caseRecord;
+
+  if (caseRecord && openStatuses.includes(caseRecord.status)) {
+    return { id: `case-${caseRecord.id}`, label: "Open case" };
+  }
+
+  if (item.kind === "case") {
+    return { id: `case-${item.caseRecord.id}`, label: "Open case" };
+  }
+
+  if (
+    item.event.review_status === "New" &&
+    !item.event.ignored &&
+    !item.event.converted_case_id
+  ) {
+    return { id: `source-event-${item.event.id}`, label: "Review" };
+  }
+
+  return { id: null, label: "Review" };
+}
+
+function sourceInitial(source?: Source) {
+  return (source?.name ?? "Post").trim().charAt(0).toUpperCase() || "P";
+}
+
+function sourceFallbackLabel(item: PostFeedItem) {
+  if (item.kind === "case") {
+    return (
+      item.caseRecord.source_type ??
+      item.caseRecord.source_platform ??
+      "Case record"
+    );
+  }
+
+  return "Monitored source";
+}
+
 function SourceEventRow({
   event,
   onReview,
@@ -479,7 +799,7 @@ function SourceEventRow({
   const text = event.post_text || event.redacted_text;
 
   return (
-    <article className="p-4">
+    <article id={`source-event-${event.id}`} className="scroll-mt-24 p-4">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
@@ -547,6 +867,7 @@ function SourceEventRow({
 }
 
 function CaseRow({
+  generatedAt,
   record,
   profiles,
   locations,
@@ -554,6 +875,7 @@ function CaseRow({
   onUpdate,
   onAction,
 }: {
+  generatedAt: string;
   record: CaseRecord;
   profiles: Profile[];
   locations: SiteLocation[];
@@ -565,10 +887,10 @@ function CaseRow({
   const [busy, startTransition] = useTransition();
   const location = locations.find((item) => item.id === record.location_id);
   const assigned = profiles.find((item) => item.id === record.assigned_to);
-  const ageMinutes = minutesBetween(record.created_at);
+  const ageMinutes = minutesBetween(record.created_at, new Date(generatedAt));
 
   return (
-    <article className="p-4">
+    <article id={`case-${record.id}`} className="scroll-mt-24 p-4">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">

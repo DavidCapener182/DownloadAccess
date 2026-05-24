@@ -1,4 +1,3 @@
-import Link from "next/link";
 import { Card, CardHeader } from "@/components/ui/card";
 
 const dpiaItems = [
@@ -21,9 +20,9 @@ const liaItems = [
 
 export default function CompliancePage() {
   return (
-    <main className="min-h-screen bg-background px-4 py-6">
+    <main className="flex-1 bg-background px-4 py-6">
       <div className="mx-auto max-w-5xl">
-        <div className="mb-5 flex items-center justify-between">
+        <div className="mb-5">
           <div>
             <p className="text-xs font-semibold uppercase tracking-wide text-teal-800">
               Governance
@@ -32,9 +31,6 @@ export default function CompliancePage() {
               Compliance setup
             </h1>
           </div>
-          <Link className="rounded-md px-3 py-2 text-sm font-medium hover:bg-muted" href="/">
-            Live monitor
-          </Link>
         </div>
 
         <div className="grid gap-5 lg:grid-cols-2">
