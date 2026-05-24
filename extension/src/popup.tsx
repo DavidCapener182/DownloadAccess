@@ -135,8 +135,8 @@ function Popup() {
       </button>
       <p className="hint">
         Open the authorised Facebook group, scroll to load the posts you want,
-        then click this. Medium, High and Critical matches are submitted; Low
-        matches stay here for review.
+        then click this. Matched posts are sent to dashboard review with comments;
+        only clearly actionable items become cases.
       </p>
       {backfillResult ? (
         <div className={backfillResult.ok ? "status" : "status error"}>
@@ -150,7 +150,18 @@ function Popup() {
         Options
       </a>
 
-      <h2>Recent detected issues</h2>
+      <div className="sectionTitle">
+        <h2>Recent detected issues</h2>
+        <button
+          className="linkButton"
+          onClick={async () => {
+            await chrome.runtime.sendMessage({ type: "CLEAR_RECENT" });
+            await refresh();
+          }}
+        >
+          Clear
+        </button>
+      </div>
       <div className="list">
         {recent.length ? (
           recent.map((issue) => (
@@ -208,9 +219,11 @@ const styles = `
   .full { margin-top: 8px; }
   .hint { margin: 8px 0 0; color: #66778d; font-size: 12px; line-height: 1.4; }
   .status { margin-top: 8px; border: 1px solid #a7f3d0; border-radius: 6px; background: #ecfdf5; color: #064e3b; padding: 8px; font-size: 12px; line-height: 1.4; }
-  .link { width: 100%; margin-top: 8px; }
-  h2 { margin: 14px 0 8px; font-size: 13px; }
-  .list { display: grid; gap: 8px; }
+	  .link { width: 100%; margin-top: 8px; }
+	  h2 { margin: 14px 0 8px; font-size: 13px; }
+	  .sectionTitle { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+	  .linkButton { min-height: 28px; background: white; color: #102033; font-size: 12px; }
+	  .list { display: grid; gap: 8px; }
   .item { border: 1px solid #d5dee9; border-radius: 8px; background: white; padding: 10px; }
   .itemTop { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
   .item p { margin: 8px 0; line-height: 1.4; }

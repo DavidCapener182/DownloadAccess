@@ -57,6 +57,11 @@ async function handleMessage(message: {
     return { ok: true, recentDetections: stored.recentDetections ?? [] };
   }
 
+  if (message.type === "CLEAR_RECENT") {
+    await chrome.storage.local.set({ recentDetections: [] });
+    return { ok: true };
+  }
+
   return { ok: false, error: "Unknown message type." };
 }
 
