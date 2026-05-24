@@ -36,12 +36,16 @@ async function handleMessage(message: {
     if (message.submitNow || issue.severity === "Critical") {
       await submitDetection(issue.id);
       if (issue.severity === "Critical") {
-        chrome.notifications.create({
-          type: "basic",
-          iconUrl: chrome.runtime.getURL("icon.svg"),
-          title: "Critical accessibility issue",
-          message: issue.redactedText.slice(0, 180),
-        });
+        try {
+          await chrome.notifications.create({
+            type: "basic",
+            iconUrl: chrome.runtime.getURL("icon.svg"),
+            title: "Critical accessibility issue",
+            message: issue.redactedText.slice(0, 180),
+          });
+        } catch {
+          // Dashboard submission is the primary alert path; notification UI is best effort.
+        }
       }
     }
     return { ok: true, submitted: Boolean(issue.submittedAt) };
