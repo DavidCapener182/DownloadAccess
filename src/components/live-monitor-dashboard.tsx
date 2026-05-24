@@ -26,6 +26,7 @@ import type {
   DashboardSnapshot,
   Profile,
   SiteLocation,
+  SourceEvent,
 } from "@/lib/types";
 import { cn, formatDateTime, minutesBetween } from "@/lib/utils";
 
@@ -89,6 +90,12 @@ export function LiveMonitorDashboard({
   );
   const highAlerts = snapshot.alerts.filter(
     (alert) => alert.severity === "High" && !alert.acknowledged,
+  );
+  const reviewEvents = snapshot.source_events.filter(
+    (event) =>
+      event.review_status === "New" &&
+      !event.converted_case_id &&
+      !event.ignored,
   );
   const summary = buildSummary(snapshot);
 
@@ -187,6 +194,35 @@ export function LiveMonitorDashboard({
 
         <div className="mt-5 grid gap-5 xl:grid-cols-[minmax(0,1.45fr)_minmax(340px,0.85fr)]">
           <div className="space-y-5">
+            <Card>
+              <CardHeader
+                title="Source review"
+                meta={`${reviewEvents.length} waiting for control-room triage`}
+              />
+              <div className="divide-y divide-border">
+                {reviewEvents.length ? (
+                  reviewEvents.map((event) => (
+                    <SourceEventRow
+                      key={event.id}
+                      event={event}
+                      onReview={async (payload) => {
+                        await fetch(`/api/source-events/${event.id}`, {
+                          method: "PATCH",
+                          headers: { "content-type": "application/json" },
+                          body: JSON.stringify(payload),
+                        });
+                        refresh();
+                      }}
+                    />
+                  ))
+                ) : (
+                  <div className="px-4 py-8 text-center text-sm text-muted-foreground">
+                    No source events waiting review.
+                  </div>
+                )}
+              </div>
+            </Card>
+
             <Card>
               <CardHeader
                 title="Live feed"
@@ -430,6 +466,86 @@ function Metric({
   );
 }
 
+function SourceEventRow({
+  event,
+  onReview,
+}: {
+  event: SourceEvent;
+  onReview: (payload: Record<string, unknown>) => Promise<void>;
+}) {
+  const [busy, startTransition] = useTransition();
+  const severityForEscalation =
+    event.predicted_severity === "Low" ? "Medium" : event.predicted_severity;
+  const text = event.post_text || event.redacted_text;
+
+  return (
+    <article className="p-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <SeverityBadge severity={event.predicted_severity} />
+            <Badge>{event.relevance}</Badge>
+            <Badge>{event.predicted_category}</Badge>
+          </div>
+          <h3 className="mt-3 text-base font-semibold">
+            {event.post_title || event.predicted_category}
+          </h3>
+          <p className="mt-2 text-sm leading-6 text-slate-700">{text}</p>
+          <CommentAccordion comments={event.comments ?? []} />
+          <div className="mt-3 flex flex-wrap gap-2 text-xs text-muted-foreground">
+            <span>Source signal</span>
+            <span>{event.classification_reason ?? "Awaiting review"}</span>
+            <span>Created: {formatDateTime(event.created_at)}</span>
+          </div>
+        </div>
+        <div className="flex min-w-52 flex-col gap-2">
+          <Button
+            variant="secondary"
+            disabled={busy}
+            onClick={() =>
+              startTransition(() => {
+                void onReview({ action: "acknowledge" });
+              })
+            }
+          >
+            <CheckCircle2 aria-hidden className="h-4 w-4" />
+            Acknowledge
+          </Button>
+          <Button
+            variant="secondary"
+            disabled={busy}
+            onClick={() =>
+              startTransition(() => {
+                void onReview({
+                  action: "ignore",
+                  note: "Reviewed by control room and marked not relevant.",
+                });
+              })
+            }
+          >
+            Not relevant
+          </Button>
+          <Button
+            disabled={busy}
+            onClick={() =>
+              startTransition(() => {
+                void onReview({
+                  action: "escalate",
+                  severity: severityForEscalation,
+                  title: event.post_title ?? undefined,
+                });
+              })
+            }
+          >
+            <ShieldAlert aria-hidden className="h-4 w-4" />
+            Escalate
+          </Button>
+        </div>
+      </div>
+    </article>
+  );
+}
+
 function CaseRow({
   record,
   profiles,
@@ -465,11 +581,13 @@ function CaseRow({
           </div>
           <h3 className="mt-3 text-base font-semibold">{record.title}</h3>
           <p className="mt-2 text-sm leading-6 text-slate-700">
-            {record.redacted_text}
+            {record.post_text || record.redacted_text}
           </p>
+          <CommentAccordion comments={record.comments ?? []} />
           <div className="mt-3 flex flex-wrap gap-2 text-xs text-muted-foreground">
             <span>{location?.name ?? "Location pending"}</span>
             <span>Source: {record.source_type ?? "Unknown"}</span>
+            <span>{record.relevance}</span>
             <span>SLA age: {ageMinutes}m</span>
             <span>Created: {formatDateTime(record.created_at)}</span>
           </div>
@@ -553,6 +671,27 @@ function CaseRow({
         </div>
       ) : null}
     </article>
+  );
+}
+
+function CommentAccordion({ comments }: { comments: string[] }) {
+  if (!comments.length) {
+    return null;
+  }
+
+  return (
+    <details className="mt-3 rounded-md border border-border bg-white">
+      <summary className="cursor-pointer px-3 py-2 text-sm font-medium">
+        Comments ({comments.length})
+      </summary>
+      <div className="divide-y divide-border">
+        {comments.map((comment, index) => (
+          <p key={`${index}-${comment.slice(0, 16)}`} className="px-3 py-2 text-sm text-slate-700">
+            {comment}
+          </p>
+        ))}
+      </div>
+    </details>
   );
 }
 
@@ -660,6 +799,7 @@ function exportCases(snapshot: DashboardSnapshot) {
       id: record.id,
       title: record.title,
       severity: record.severity,
+      relevance: record.relevance,
       status: record.status,
       location: record.location_id
         ? locationById.get(record.location_id) ?? ""
@@ -668,6 +808,7 @@ function exportCases(snapshot: DashboardSnapshot) {
       created_at: record.created_at,
       updated_at: record.updated_at,
       redacted_text: record.redacted_text,
+      comments: (record.comments ?? []).join(" | "),
     }));
     const header = Object.keys(rows[0] ?? { id: "" });
     const csv = [

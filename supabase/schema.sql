@@ -65,15 +65,23 @@ create table if not exists public.dl_site_locations (
 create table if not exists public.dl_cases (
   id uuid primary key default gen_random_uuid(),
   title text not null,
+  source_event_id uuid,
   source_id uuid references public.dl_sources(id),
   source_platform text,
   source_type text,
   source_url text,
   original_text text,
   redacted_text text not null,
+  post_title text,
+  post_text text,
+  comments jsonb not null default '[]'::jsonb,
   text_hash text not null,
   category text not null,
   severity text not null check (severity in ('Critical', 'High', 'Medium', 'Low')),
+  relevance text not null default 'Needs review' check (
+    relevance in ('Actionable', 'Needs review', 'Information', 'Not relevant')
+  ),
+  classification_reason text,
   status text not null default 'New' check (
     status in (
       'New',
@@ -121,16 +129,43 @@ create table if not exists public.dl_source_events (
   source_id uuid references public.dl_sources(id),
   raw_text text not null,
   redacted_text text not null,
+  post_title text,
+  post_text text,
+  comments jsonb not null default '[]'::jsonb,
   text_hash text not null,
   source_url text,
   matched_keywords text[] not null default '{}',
   predicted_category text,
   predicted_severity text not null check (predicted_severity in ('Critical', 'High', 'Medium', 'Low')),
+  relevance text not null default 'Needs review' check (
+    relevance in ('Actionable', 'Needs review', 'Information', 'Not relevant')
+  ),
+  classification_reason text,
+  review_status text not null default 'New' check (
+    review_status in ('New', 'Acknowledged', 'Escalated', 'Ignored')
+  ),
+  review_note text,
+  acknowledged_by uuid references public.dl_profiles(id),
+  acknowledged_at timestamptz,
   converted_case_id uuid references public.dl_cases(id),
   ignored boolean not null default false,
   ignored_reason text,
   created_at timestamptz not null default now()
 );
+
+do $$
+begin
+  if not exists (
+    select 1
+    from pg_constraint
+    where conname = 'dl_cases_source_event_id_fkey'
+  ) then
+    alter table public.dl_cases
+      add constraint dl_cases_source_event_id_fkey
+      foreign key (source_event_id) references public.dl_source_events(id);
+  end if;
+end;
+$$;
 
 create table if not exists public.dl_public_reports (
   id uuid primary key default gen_random_uuid(),
@@ -197,9 +232,11 @@ create index if not exists dl_cases_status_idx on public.dl_cases(status);
 create index if not exists dl_cases_severity_idx on public.dl_cases(severity);
 create index if not exists dl_cases_location_idx on public.dl_cases(location_id);
 create index if not exists dl_cases_text_hash_idx on public.dl_cases(text_hash);
+create index if not exists dl_cases_source_event_idx on public.dl_cases(source_event_id);
 create index if not exists dl_cases_created_at_idx on public.dl_cases(created_at desc);
 create index if not exists dl_alerts_ack_idx on public.dl_alerts(acknowledged, severity);
 create index if not exists dl_source_events_hash_idx on public.dl_source_events(text_hash);
+create index if not exists dl_source_events_review_status_idx on public.dl_source_events(review_status, created_at desc);
 create index if not exists dl_source_events_created_idx on public.dl_source_events(created_at desc);
 create index if not exists dl_public_reports_created_idx on public.dl_public_reports(created_at desc);
 

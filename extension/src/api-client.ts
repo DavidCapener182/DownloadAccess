@@ -16,6 +16,9 @@ export async function submitIssue(
     },
     body: JSON.stringify({
       raw_text: issue.text,
+      post_title: issue.title,
+      post_text: issue.postText,
+      comments: issue.comments,
       source_id: settings.sourceId || null,
       source_url: issue.sourceUrl,
       source_platform: "Browser",

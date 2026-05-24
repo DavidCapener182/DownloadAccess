@@ -86,6 +86,14 @@ export const seedKeywords: MonitoredKeyword[] = [
   keyword("kw-low-01", "feedback", "Low", "Feedback"),
   keyword("kw-low-02", "suggestion", "Low", "Feedback"),
   keyword("kw-low-03", "general question", "Low", "Information"),
+  keyword("kw-security-01", "security", "Medium", "Security"),
+  keyword("kw-security-02", "fight", "High", "Security"),
+  keyword("kw-security-03", "assault", "High", "Security"),
+  keyword("kw-security-04", "harassment", "High", "Security"),
+  keyword("kw-security-05", "threatening", "High", "Security"),
+  keyword("kw-security-06", "aggressive", "Medium", "Security"),
+  keyword("kw-security-07", "stolen", "Medium", "Security"),
+  keyword("kw-security-08", "theft", "Medium", "Security"),
 ];
 
 function location(

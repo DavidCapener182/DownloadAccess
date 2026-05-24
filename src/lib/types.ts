@@ -8,6 +8,14 @@ export type UserRole =
 
 export type Severity = "Critical" | "High" | "Medium" | "Low";
 
+export type Relevance =
+  | "Actionable"
+  | "Needs review"
+  | "Information"
+  | "Not relevant";
+
+export type ReviewStatus = "New" | "Acknowledged" | "Escalated" | "Ignored";
+
 export type CaseStatus =
   | "New"
   | "Reviewing"
@@ -69,15 +77,21 @@ export type SiteLocation = {
 export type CaseRecord = {
   id: string;
   title: string;
+  source_event_id: string | null;
   source_id: string | null;
   source_platform: string | null;
   source_type: SourceType | string | null;
   source_url: string | null;
   original_text: string | null;
   redacted_text: string;
+  post_title: string | null;
+  post_text: string | null;
+  comments: string[];
   text_hash: string;
   category: string;
   severity: Severity;
+  relevance: Relevance;
+  classification_reason: string | null;
   status: CaseStatus;
   location_id: string | null;
   assigned_to: string | null;
@@ -114,11 +128,20 @@ export type SourceEvent = {
   source_id: string | null;
   raw_text: string;
   redacted_text: string;
+  post_title: string | null;
+  post_text: string | null;
+  comments: string[];
   text_hash: string;
   source_url: string | null;
   matched_keywords: string[];
   predicted_category: string;
   predicted_severity: Severity;
+  relevance: Relevance;
+  classification_reason: string | null;
+  review_status: ReviewStatus;
+  review_note: string | null;
+  acknowledged_by: string | null;
+  acknowledged_at: string | null;
   converted_case_id: string | null;
   ignored: boolean;
   ignored_reason: string | null;
@@ -176,6 +199,8 @@ export type ClassificationResult = {
   title: string;
   category: string;
   severity: Severity;
+  relevance: Relevance;
+  reason: string;
   matched_keywords: string[];
   location_name: string | null;
   redacted_text: string;

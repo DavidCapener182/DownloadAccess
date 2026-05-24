@@ -52,6 +52,33 @@ const safeguardingMedicalTerms = [
   "distressed",
 ];
 
+const urgentNowPatterns = [
+  /\b(right now|currently|at the moment|now|urgent|asap|immediately)\b/i,
+  /\b(i'?m|i am|they'?re|they are|someone is|person is)\s+(having|in|stuck|trapped|distressed|injured|fallen)\b/i,
+  /\b(having|having a)\s+panic attack\b/i,
+  /\b(can'?t|cannot)\s+(breathe|move|get out|cope|reach)\b/i,
+  /\bneed(s)?\s+(help|medic|security|welfare|assistance)\b/i,
+];
+
+const informationContextPatterns = [
+  /\b(i|we)\s+(have|suffer|suffer from|live with|am diagnosed with|got)\b.{0,80}\b(panic attacks?|ptsd|cptsd|eupd|anxiety|autism|adhd|disability|medical condition)\b/i,
+  /\b(first time|wondering|does anyone|has anyone|any advice|any tips|experience of|how do you manage|what should i expect)\b/i,
+  /\b(i am|i'm)\s+(nervous|worried|anxious)\s+about\s+(coming|attending|going)\b/i,
+];
+
+const securityTerms = [
+  "security",
+  "fight",
+  "assault",
+  "harassment",
+  "threat",
+  "threatening",
+  "aggressive",
+  "stolen",
+  "theft",
+  "violence",
+];
+
 function normalise(value: string) {
   return value
     .toLowerCase()
@@ -154,15 +181,49 @@ export function classifyText(
   const safeguardingOrMedicalFlag = safeguardingMedicalTerms.some((term) =>
     containsPhrase(text, term),
   );
+  const urgentNow = urgentNowPatterns.some((pattern) => pattern.test(value));
+  const informationContext =
+    !urgentNow && informationContextPatterns.some((pattern) => pattern.test(value));
   const personalDataPresent = detectPersonalData(value);
   const location = detectLocation(value, locations);
   const matchedKeywords = [...new Set(matched.map((entry) => entry.keyword))];
-  const primaryKeyword = matchedKeywords[0] ?? "manual review";
+  const hasSecuritySignal = securityTerms.some((term) => containsPhrase(text, term));
+
+  if (hasSecuritySignal && category === "Unclassified") {
+    category = "Security";
+    severity = maxSeverity(severity, "Medium");
+  }
+
+  let relevance: ClassificationResult["relevance"] = "Needs review";
+  let reason = "Keyword match needs control-room review.";
+
+  if (!matchedKeywords.length && !hasSecuritySignal) {
+    relevance = "Not relevant";
+    reason = "No monitored operational keyword was found.";
+  } else if (informationContext) {
+    relevance = "Information";
+    severity = "Low";
+    category = "Information";
+    reason =
+      "Wording appears to describe a condition, advice request, or future concern rather than a live incident.";
+  } else if (severity === "Critical" || severity === "High") {
+    relevance = "Actionable";
+    reason = urgentNow
+      ? "Urgent wording indicates this may be happening now."
+      : "High-risk operational keyword found.";
+  }
+
+  const primaryKeyword =
+    relevance === "Information"
+      ? "information request"
+      : matchedKeywords[0] ?? (hasSecuritySignal ? "security" : "manual review");
 
   return {
     title: `${severity}: ${primaryKeyword}`,
     category,
     severity,
+    relevance,
+    reason,
     matched_keywords: matchedKeywords,
     location_name: location?.name ?? null,
     redacted_text: redactOperationalText(value),

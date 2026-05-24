@@ -3,6 +3,7 @@ import {
   hashText,
   isAtLeastSeverity,
   redactOperationalText,
+  summariseForTitle,
 } from "@/lib/classifier";
 import { HttpError } from "@/lib/http";
 import { getStore } from "@/lib/store";
@@ -29,6 +30,9 @@ const validStatuses: CaseStatus[] = [
 type SourceEventPayload = {
   text?: string;
   raw_text?: string;
+  post_title?: string | null;
+  post_text?: string | null;
+  comments?: unknown;
   source_id?: string | null;
   source_url?: string | null;
   source_platform?: string | null;
@@ -79,6 +83,42 @@ function validateStatus(value: unknown): CaseStatus | undefined {
   throw new HttpError(400, "Invalid case status.");
 }
 
+function normalizeComments(value: unknown) {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .map((item) => {
+      if (typeof item === "string") {
+        return item.trim();
+      }
+
+      if (
+        item &&
+        typeof item === "object" &&
+        "text" in item &&
+        typeof item.text === "string"
+      ) {
+        return item.text.trim();
+      }
+
+      return "";
+    })
+    .filter((item) => item.length >= 3)
+    .slice(0, 20);
+}
+
+function optionalText(value: unknown) {
+  return typeof value === "string" && value.trim().length ? value.trim() : null;
+}
+
+function composeStructuredText(postText: string, comments: string[]) {
+  return [postText, ...comments.map((comment) => `Comment: ${comment}`)]
+    .filter(Boolean)
+    .join("\n");
+}
+
 export async function ingestSourceEvent(
   payload: SourceEventPayload,
   token: string | null,
@@ -90,23 +130,43 @@ export async function ingestSourceEvent(
     throw new HttpError(401, "Source token is missing, invalid, or not approved.");
   }
 
-  const rawText = requireText(payload.raw_text ?? payload.text, "text");
+  const comments = normalizeComments(payload.comments);
+  const payloadPostText = optionalText(payload.post_text);
+  const rawText = requireText(
+    payload.raw_text ?? payload.text ?? composeStructuredText(payloadPostText ?? "", comments),
+    "text",
+  );
+  const postText = payloadPostText ?? rawText;
+  const postTitle = optionalText(payload.post_title);
   const locations = await store.listLocations();
   const classification = classifyText(rawText, locations);
   const sourceUrl = payload.source_url ?? source.url;
   const textHash = hashText(`${source.id}:${sourceUrl ?? ""}:${rawText}`);
   const duplicate = await store.findDuplicateCase(textHash);
+  const redactedPostText = redactOperationalText(postText);
+  const redactedComments = comments.map(redactOperationalText);
+  const redactedTitle =
+    postTitle ? redactOperationalText(postTitle) : summariseForTitle(redactedPostText);
 
   if (duplicate) {
     const event = await store.createSourceEvent({
       source_id: source.id,
       raw_text: rawText,
       redacted_text: classification.redacted_text,
+      post_title: redactedTitle,
+      post_text: redactedPostText,
+      comments: redactedComments,
       text_hash: textHash,
       source_url: sourceUrl,
       matched_keywords: classification.matched_keywords,
       predicted_category: classification.category,
       predicted_severity: classification.severity,
+      relevance: classification.relevance,
+      classification_reason: classification.reason,
+      review_status: "Ignored",
+      review_note: null,
+      acknowledged_by: null,
+      acknowledged_at: null,
       converted_case_id: duplicate.id,
       ignored: true,
       ignored_reason: "Duplicate of existing case.",
@@ -116,23 +176,54 @@ export async function ingestSourceEvent(
   }
 
   let createdCase: CaseRecord | null = null;
+  let event = await store.createSourceEvent({
+    source_id: source.id,
+    raw_text: rawText,
+    redacted_text: classification.redacted_text,
+    post_title: redactedTitle,
+    post_text: redactedPostText,
+    comments: redactedComments,
+    text_hash: textHash,
+    source_url: sourceUrl,
+    matched_keywords: classification.matched_keywords,
+    predicted_category: classification.category,
+    predicted_severity: classification.severity,
+    relevance: classification.relevance,
+    classification_reason: classification.reason,
+    review_status: "New",
+    review_note: null,
+    acknowledged_by: null,
+    acknowledged_at: null,
+    converted_case_id: null,
+    ignored: false,
+    ignored_reason: null,
+  });
 
-  if (isAtLeastSeverity(classification.severity, "Medium")) {
+  if (
+    classification.relevance === "Actionable" &&
+    isAtLeastSeverity(classification.severity, "Medium")
+  ) {
     const locationId = await store.getLocationIdByName(
       classification.location_name,
     );
 
     createdCase = await store.createCase({
-      title: classification.title,
+      title: postTitle?.trim() || classification.title,
+      source_event_id: event.id,
       source_id: source.id,
       source_platform: payload.source_platform ?? source.platform,
       source_type: source.source_type,
       source_url: sourceUrl,
       original_text: rawText,
       redacted_text: classification.redacted_text,
+      post_title: redactedTitle,
+      post_text: redactedPostText,
+      comments: redactedComments,
       text_hash: textHash,
       category: classification.category,
       severity: classification.severity,
+      relevance: classification.relevance,
+      classification_reason: classification.reason,
       status: "New",
       location_id: locationId,
       assigned_to: null,
@@ -143,21 +234,13 @@ export async function ingestSourceEvent(
       duplicate_of: null,
       created_by: null,
     });
-  }
 
-  const event = await store.createSourceEvent({
-    source_id: source.id,
-    raw_text: rawText,
-    redacted_text: classification.redacted_text,
-    text_hash: textHash,
-    source_url: sourceUrl,
-    matched_keywords: classification.matched_keywords,
-    predicted_category: classification.category,
-    predicted_severity: classification.severity,
-    converted_case_id: createdCase?.id ?? null,
-    ignored: false,
-    ignored_reason: null,
-  });
+    const updatedEvent = await store.updateSourceEvent(event.id, {
+      converted_case_id: createdCase.id,
+      review_status: "Escalated",
+    });
+    event = updatedEvent ?? event;
+  }
 
   return { event, case: createdCase, duplicate: null, classification };
 }
@@ -184,16 +267,22 @@ export async function createCaseFromPublicReport(payload: PublicReportPayload) {
 
   const createdCase = await store.createCase({
     title: `${severity}: ${issueType}`,
+    source_event_id: null,
     source_id: null,
     source_platform: "KSS form",
     source_type: "Direct QR Report",
     source_url: "/report",
     original_text: reportText,
     redacted_text: redactOperationalText(reportText),
+    post_title: issueType,
+    post_text: redactOperationalText(reportText),
+    comments: [],
     text_hash: textHash,
     category:
       classification.category === "Unclassified" ? issueType : classification.category,
     severity,
+    relevance: "Actionable",
+    classification_reason: "Direct QR report submitted with explicit consent.",
     status: payload.assistance_required_now ? "Escalated" : "New",
     location_id: payload.location_id ?? location?.id ?? null,
     assigned_to: null,
@@ -239,15 +328,21 @@ export async function createManualCase(payload: ManualCasePayload) {
 
   const createdCase = await store.createCase({
     title: payload.title?.trim() || classification.title,
+    source_event_id: null,
     source_id: null,
     source_platform: "Manual entry",
     source_type: "Manual Import",
     source_url: null,
     original_text: text,
     redacted_text: classification.redacted_text,
+    post_title: payload.title?.trim() || classification.title,
+    post_text: classification.redacted_text,
+    comments: [],
     text_hash: hashText(`manual:${text}`),
     category: payload.category?.trim() || classification.category,
     severity,
+    relevance: classification.relevance,
+    classification_reason: classification.reason,
     status: payload.status ?? "New",
     location_id: locationId,
     assigned_to: payload.assigned_to ?? null,
@@ -295,4 +390,117 @@ export async function updateCaseFromPayload(
   }
 
   return updated;
+}
+
+export async function reviewSourceEvent(
+  id: string,
+  payload: Record<string, unknown>,
+) {
+  const action = typeof payload.action === "string" ? payload.action : null;
+  if (!action || !["acknowledge", "ignore", "escalate"].includes(action)) {
+    throw new HttpError(400, "Unsupported source event review action.");
+  }
+
+  const store = getStore();
+  const event = await store.getSourceEvent(id);
+  if (!event) {
+    throw new HttpError(404, "Source event not found.");
+  }
+
+  if (action === "acknowledge") {
+    const updated = await store.updateSourceEvent(id, {
+      review_status: "Acknowledged",
+      review_note: optionalText(payload.note),
+      acknowledged_by: null,
+      acknowledged_at: new Date().toISOString(),
+    });
+    return { event: updated, case: null };
+  }
+
+  if (action === "ignore") {
+    const updated = await store.updateSourceEvent(id, {
+      review_status: "Ignored",
+      review_note: optionalText(payload.note),
+      ignored: true,
+      ignored_reason: optionalText(payload.note) || "Marked not relevant by control room.",
+      acknowledged_by: null,
+      acknowledged_at: new Date().toISOString(),
+    });
+    return { event: updated, case: null };
+  }
+
+  const severity =
+    typeof payload.severity === "string" &&
+    ["Low", "Medium", "High", "Critical"].includes(payload.severity)
+      ? (payload.severity as Severity)
+      : event.predicted_severity;
+  const assignedTo =
+    typeof payload.assigned_to === "string" || payload.assigned_to === null
+      ? payload.assigned_to
+      : null;
+
+  if (event.converted_case_id) {
+    const updatedCase = await store.updateCase(event.converted_case_id, {
+      status: "Escalated",
+      severity,
+      assigned_to: assignedTo,
+    });
+    const updatedEvent = await store.updateSourceEvent(id, {
+      review_status: "Escalated",
+      review_note: optionalText(payload.note),
+      acknowledged_by: null,
+      acknowledged_at: new Date().toISOString(),
+    });
+    return { event: updatedEvent, case: updatedCase };
+  }
+
+  const locations = await store.listLocations();
+  const classification = classifyText(event.raw_text, locations);
+  const locationId = await store.getLocationIdByName(classification.location_name);
+  const createdCase = await store.createCase({
+    title:
+      optionalText(payload.title) ||
+      event.post_title ||
+      `${severity}: ${event.predicted_category}`,
+    source_event_id: event.id,
+    source_id: event.source_id,
+    source_platform: event.source_url?.includes("facebook.com")
+      ? "Facebook"
+      : "Source review",
+    source_type: event.source_url?.includes("facebook.com")
+      ? "Facebook Group"
+      : "Chrome Extension",
+    source_url: event.source_url,
+    original_text: event.raw_text,
+    redacted_text: event.redacted_text,
+    post_title: event.post_title,
+    post_text: event.post_text,
+    comments: event.comments,
+    text_hash: event.text_hash,
+    category: event.predicted_category,
+    severity,
+    relevance: "Actionable",
+    classification_reason:
+      optionalText(payload.note) ||
+      event.classification_reason ||
+      "Escalated manually by event control.",
+    status: "Escalated",
+    location_id: locationId,
+    assigned_to: assignedTo,
+    personal_data_present: classification.personal_data_present,
+    special_category_risk: classification.special_category_risk,
+    safeguarding_or_medical_flag: classification.safeguarding_or_medical_flag,
+    duplicate_of: null,
+    created_by: null,
+  });
+
+  const updatedEvent = await store.updateSourceEvent(id, {
+    converted_case_id: createdCase.id,
+    review_status: "Escalated",
+    review_note: optionalText(payload.note),
+    acknowledged_by: null,
+    acknowledged_at: new Date().toISOString(),
+  });
+
+  return { event: updatedEvent, case: createdCase };
 }

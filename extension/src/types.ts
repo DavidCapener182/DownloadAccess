@@ -16,6 +16,9 @@ export type ExtensionSettings = {
 export type DetectedIssue = {
   id: string;
   text: string;
+  title: string;
+  postText: string;
+  comments: string[];
   redactedText: string;
   severity: Severity;
   category: string;

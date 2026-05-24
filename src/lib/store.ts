@@ -40,11 +40,27 @@ export interface DataStore {
   listLocations(): Promise<SiteLocation[]>;
   findDuplicateCase(textHash: string): Promise<CaseRecord | null>;
   getLocationIdByName(name: string | null): Promise<string | null>;
+  getSourceEvent(id: string): Promise<SourceEvent | null>;
   validateSourceToken(
     token: string | null,
     requestedSourceId?: string | null,
   ): Promise<Source | null>;
   createSourceEvent(event: NewSourceEvent): Promise<SourceEvent>;
+  updateSourceEvent(
+    id: string,
+    updates: Partial<
+      Pick<
+        SourceEvent,
+        | "converted_case_id"
+        | "ignored"
+        | "ignored_reason"
+        | "review_status"
+        | "review_note"
+        | "acknowledged_by"
+        | "acknowledged_at"
+      >
+    >,
+  ): Promise<SourceEvent | null>;
   createCase(record: NewCase): Promise<CaseRecord>;
   updateCase(
     id: string,
@@ -110,6 +126,10 @@ class MemoryStore implements DataStore {
     );
   }
 
+  async getSourceEvent(eventId: string) {
+    return this.sourceEvents.find((event) => event.id === eventId) ?? null;
+  }
+
   async validateSourceToken(token: string | null, requestedSourceId?: string | null) {
     const configuredToken = process.env.EXTENSION_API_TOKEN;
     const devToken = process.env.NODE_ENV === "production" ? null : "dev-extension-token";
@@ -140,6 +160,31 @@ class MemoryStore implements DataStore {
       ignored: event.ignored,
     });
     return created;
+  }
+
+  async updateSourceEvent(
+    eventId: string,
+    updates: Partial<
+      Pick<
+        SourceEvent,
+        | "converted_case_id"
+        | "ignored"
+        | "ignored_reason"
+        | "review_status"
+        | "review_note"
+        | "acknowledged_by"
+        | "acknowledged_at"
+      >
+    >,
+  ) {
+    const target = this.sourceEvents.find((event) => event.id === eventId);
+    if (!target) {
+      return null;
+    }
+
+    Object.assign(target, updates);
+    this.audit("source_event.updated", "source_events", target.id, updates);
+    return target;
   }
 
   async createCase(record: NewCase) {
@@ -373,6 +418,7 @@ class MemoryStore implements DataStore {
     const first: CaseRecord = {
       id: "case-demo-critical",
       title: "Critical: wheelchair stuck",
+      source_event_id: null,
       source_id: "source-chrome-extension",
       source_platform: "Browser",
       source_type: "Chrome Extension",
@@ -381,10 +427,16 @@ class MemoryStore implements DataStore {
         "Demo signal: wheelchair stuck near Trackway East and cannot get out.",
       redacted_text:
         "Demo signal: wheelchair stuck near Trackway East and cannot get out.",
+      post_title: "Wheelchair stuck near Trackway East",
+      post_text:
+        "Demo signal: wheelchair stuck near Trackway East and cannot get out.",
+      comments: [],
       text_hash:
         "demo-critical-wheelchair-stuck-trackway-east-cannot-get-out",
       category: "Mobility access",
       severity: "Critical",
+      relevance: "Actionable",
+      classification_reason: "Urgent wording indicates this may be happening now.",
       status: "New",
       location_id: "loc-trackway-east",
       assigned_to: null,
@@ -401,6 +453,7 @@ class MemoryStore implements DataStore {
     const second: CaseRecord = {
       id: "case-demo-high",
       title: "High: accessible toilet blocked",
+      source_event_id: null,
       source_id: "source-qr-report",
       source_platform: "KSS form",
       source_type: "Direct QR Report",
@@ -409,9 +462,15 @@ class MemoryStore implements DataStore {
         "Demo signal: accessible toilet blocked at Accessible Toilets North.",
       redacted_text:
         "Demo signal: accessible toilet blocked at Accessible Toilets North.",
+      post_title: "Accessible toilet blocked",
+      post_text:
+        "Demo signal: accessible toilet blocked at Accessible Toilets North.",
+      comments: [],
       text_hash: "demo-high-accessible-toilet-blocked-north",
       category: "Accessible toilet",
       severity: "High",
+      relevance: "Actionable",
+      classification_reason: "High-risk operational keyword found.",
       status: "Assigned",
       location_id: "loc-accessible-toilets-north",
       assigned_to: "profile-field-supervisor",
@@ -531,6 +590,15 @@ class SupabaseStore implements DataStore {
     return (data?.id as string | undefined) ?? null;
   }
 
+  async getSourceEvent(eventId: string) {
+    const { data, error } = await this.table("source_events")
+      .select("*")
+      .eq("id", eventId)
+      .maybeSingle();
+    if (error) throw error;
+    return (data as SourceEvent | null) ?? null;
+  }
+
   async validateSourceToken(token: string | null) {
     if (!token) return null;
 
@@ -565,6 +633,32 @@ class SupabaseStore implements DataStore {
       source_id: event.source_id,
       ignored: event.ignored,
     });
+    return data as SourceEvent;
+  }
+
+  async updateSourceEvent(
+    eventId: string,
+    updates: Partial<
+      Pick<
+        SourceEvent,
+        | "converted_case_id"
+        | "ignored"
+        | "ignored_reason"
+        | "review_status"
+        | "review_note"
+        | "acknowledged_by"
+        | "acknowledged_at"
+      >
+    >,
+  ) {
+    const { data, error } = await this.table("source_events")
+      .update(updates)
+      .eq("id", eventId)
+      .select()
+      .maybeSingle();
+    if (error) throw error;
+    if (!data) return null;
+    await this.audit("source_event.updated", "source_events", eventId, updates);
     return data as SourceEvent;
   }
 

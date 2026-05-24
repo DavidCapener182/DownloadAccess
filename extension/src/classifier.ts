@@ -53,6 +53,14 @@ const rules: Rule[] = [
   ["feedback", "Feedback", "Low"],
   ["suggestion", "Feedback", "Low"],
   ["general question", "Information", "Low"],
+  ["security", "Security", "Medium"],
+  ["fight", "Security", "High"],
+  ["assault", "Security", "High"],
+  ["harassment", "Security", "High"],
+  ["threatening", "Security", "High"],
+  ["aggressive", "Security", "Medium"],
+  ["stolen", "Security", "Medium"],
+  ["theft", "Security", "Medium"],
 ].map(([keyword, category, severity]) => ({
   keyword,
   category,
@@ -72,6 +80,18 @@ const phonePattern =
 const profileUrlPattern =
   /https?:\/\/(?:www\.)?(?:facebook|instagram|x|twitter|tiktok|threads)\.com\/[^\s]+/gi;
 const socialHandlePattern = /(^|\s)@[a-z0-9_.-]{2,}/gi;
+const urgentNowPatterns = [
+  /\b(right now|currently|at the moment|now|urgent|asap|immediately)\b/i,
+  /\b(i'?m|i am|they'?re|they are|someone is|person is)\s+(having|in|stuck|trapped|distressed|injured|fallen)\b/i,
+  /\b(having|having a)\s+panic attack\b/i,
+  /\b(can'?t|cannot)\s+(breathe|move|get out|cope|reach)\b/i,
+  /\bneed(s)?\s+(help|medic|security|welfare|assistance)\b/i,
+];
+const informationContextPatterns = [
+  /\b(i|we)\s+(have|suffer|suffer from|live with|am diagnosed with|got)\b.{0,80}\b(panic attacks?|ptsd|cptsd|eupd|anxiety|autism|adhd|disability|medical condition)\b/i,
+  /\b(first time|wondering|does anyone|has anyone|any advice|any tips|experience of|how do you manage|what should i expect)\b/i,
+  /\b(i am|i'm)\s+(nervous|worried|anxious)\s+about\s+(coming|attending|going)\b/i,
+];
 
 function normalise(value: string) {
   return value
@@ -105,6 +125,15 @@ export function classifyVisibleText(value: string) {
       severity = rule.severity;
       category = rule.category;
     }
+  }
+
+  const urgentNow = urgentNowPatterns.some((pattern) => pattern.test(value));
+  const informationContext =
+    !urgentNow && informationContextPatterns.some((pattern) => pattern.test(value));
+
+  if (informationContext && matched.length) {
+    severity = "Low";
+    category = "Information";
   }
 
   return {

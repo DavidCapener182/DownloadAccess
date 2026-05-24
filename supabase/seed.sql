@@ -76,7 +76,15 @@ values
   ('complaint', 'Complaint', 'Medium'),
   ('feedback', 'Feedback', 'Low'),
   ('suggestion', 'Feedback', 'Low'),
-  ('general question', 'Information', 'Low')
+  ('general question', 'Information', 'Low'),
+  ('security', 'Security', 'Medium'),
+  ('fight', 'Security', 'High'),
+  ('assault', 'Security', 'High'),
+  ('harassment', 'Security', 'High'),
+  ('threatening', 'Security', 'High'),
+  ('aggressive', 'Security', 'Medium'),
+  ('stolen', 'Security', 'Medium'),
+  ('theft', 'Security', 'Medium')
 on conflict do nothing;
 
 -- Create a Chrome extension source token after generating a random token.

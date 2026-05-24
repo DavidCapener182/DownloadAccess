@@ -6,6 +6,13 @@ const seen = new Set<string>();
 let observer: MutationObserver | null = null;
 let started = false;
 
+type StructuredPost = {
+  title: string;
+  postText: string;
+  comments: string[];
+  combinedText: string;
+};
+
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message?.type !== "BACKFILL_VISIBLE") {
     return false;
@@ -125,10 +132,11 @@ async function inspectNode(
     return "skipped";
   }
 
-  const text = extractText(node);
-  if (!text) {
+  const structured = extractStructuredPost(node);
+  if (!structured) {
     return "skipped";
   }
+  const text = structured.combinedText;
 
   const settings = await getSettings();
   if (
@@ -154,6 +162,9 @@ async function inspectNode(
   const issue: DetectedIssue = {
     id,
     text,
+    title: structured.title,
+    postText: structured.postText,
+    comments: structured.comments,
     redactedText: classification.redactedText,
     severity: classification.severity,
     category: classification.category,
@@ -162,9 +173,7 @@ async function inspectNode(
     detectedAt: new Date().toISOString(),
   };
 
-  const submitNow =
-    Boolean(options.submitMatched) &&
-    issue.severity !== "Low";
+  const submitNow = Boolean(options.submitMatched);
 
   if (seen.has(id)) {
     if (submitNow) {
@@ -207,30 +216,174 @@ async function inspectNode(
 }
 
 function collectCandidateContainers() {
-  const selector =
-    'article,[role="article"],[data-pagelet],div[aria-label*="comment" i],div[aria-label*="post" i]';
+  const selector = 'article,[role="article"]';
   const containers = new Set<HTMLElement>();
 
   for (const node of document.querySelectorAll<HTMLElement>(selector)) {
-    const container = node.closest<HTMLElement>(selector) ?? node;
-    if (isVisible(container)) {
-      containers.add(container);
+    const parentArticle = node.parentElement?.closest<HTMLElement>(selector);
+    if (!parentArticle && isVisible(node) && looksLikePostContainer(node)) {
+      containers.add(node);
     }
   }
 
   return [...containers];
 }
 
-function extractText(node: HTMLElement) {
-  const container =
-    node.closest<HTMLElement>(
-      'article,[role="article"],[data-pagelet],div[aria-label*="comment" i],div[aria-label*="post" i]',
-    ) ?? node;
-  const text = container.innerText.replace(/\s+/g, " ").trim();
-  if (text.length < 24 || text.length > 2400) {
+function extractStructuredPost(node: HTMLElement): StructuredPost | null {
+  const container = node.closest<HTMLElement>('article,[role="article"]') ?? node;
+  if (!looksLikePostContainer(container)) {
     return null;
   }
-  return text;
+
+  const postText = cleanPostText(extractPostBody(container));
+  const comments = extractComments(container)
+    .map(cleanPostText)
+    .filter((comment) => comment.length >= 12)
+    .slice(0, 12);
+  const combinedText = composeCombinedText(postText, comments);
+
+  if (combinedText.length < 24 || combinedText.length > 2400) {
+    return null;
+  }
+
+  if (isLikelyPageShell(combinedText)) {
+    return null;
+  }
+
+  return {
+    title: buildTitle(postText || combinedText),
+    postText: postText || combinedText,
+    comments,
+    combinedText,
+  };
+}
+
+function extractPostBody(container: HTMLElement) {
+  const messageNodes = [
+    ...container.querySelectorAll<HTMLElement>(
+      '[data-ad-preview="message"],[data-ad-comet-preview="message"]',
+    ),
+  ].filter(isVisible);
+
+  if (messageNodes.length) {
+    return uniqueText(messageNodes.map((node) => node.innerText)).join("\n");
+  }
+
+  const lines = meaningfulLines(container.innerText);
+  const commentStart = lines.findIndex((line) =>
+    /^(view more|most relevant|all comments|write (a )?(comment|answer)|\d+\s+(comments?|answers?))\b/i.test(line),
+  );
+  return lines.slice(0, commentStart > 0 ? commentStart : 8).join("\n");
+}
+
+function extractComments(container: HTMLElement) {
+  const commentNodes = [
+    ...container.querySelectorAll<HTMLElement>(
+      '[aria-label*="comment" i],[aria-label*="reply" i]',
+    ),
+  ].filter((node) => node !== container && isVisible(node));
+  const fromNodes = uniqueText(
+    commentNodes
+      .map((node) => meaningfulLines(node.innerText).join(" "))
+      .filter((text) => text.length > 12),
+  );
+
+  if (fromNodes.length) {
+    return fromNodes;
+  }
+
+  const lines = meaningfulLines(container.innerText);
+  const markerIndex = lines.findIndex((line) =>
+    /^(view more|most relevant|all comments|\d+\s+(comments?|answers?))\b/i.test(line),
+  );
+
+  if (markerIndex < 0) {
+    return [];
+  }
+
+  return uniqueText(
+    lines
+      .slice(markerIndex + 1)
+      .join("\n")
+      .split(/\b(?:Like|Reply|Share)\b/i)
+      .map((chunk) => cleanPostText(chunk))
+      .filter((chunk) => chunk.length > 20),
+  );
+}
+
+function meaningfulLines(value: string) {
+  return value
+    .split(/\n+/)
+    .map((line) => line.replace(/\s+/g, " ").trim())
+    .filter(Boolean)
+    .filter((line) => !isBoilerplateLine(line));
+}
+
+function cleanPostText(value: string) {
+  return meaningfulLines(value)
+    .join(" ")
+    .replace(/\b(Facebook\s*){2,}/gi, " ")
+    .replace(/\b(Like|Reply|Share|See more|View more answers|Write an answer)\b/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function composeCombinedText(postText: string, comments: string[]) {
+  return [postText, ...comments.map((comment) => `Comment: ${comment}`)]
+    .filter(Boolean)
+    .join("\n");
+}
+
+function buildTitle(value: string) {
+  const firstSentence = value
+    .replace(/\s+/g, " ")
+    .split(/(?<=[.!?])\s+/)[0]
+    ?.trim();
+  const title = firstSentence || value.trim();
+  return title.length > 96 ? `${title.slice(0, 93)}...` : title;
+}
+
+function uniqueText(values: string[]) {
+  const seenText = new Set<string>();
+  const next: string[] = [];
+
+  for (const value of values) {
+    const cleaned = cleanPostText(value);
+    const key = cleaned.toLowerCase();
+    if (cleaned && !seenText.has(key)) {
+      seenText.add(key);
+      next.push(cleaned);
+    }
+  }
+
+  return next;
+}
+
+function isBoilerplateLine(line: string) {
+  return (
+    /^facebook$/i.test(line) ||
+    /^(like|reply|share|send|copy link|write an answer|write a comment)$/i.test(line) ||
+    /^(see more|view more|most relevant|all comments|top comments)$/i.test(line) ||
+    /^\d+[dhm]$/i.test(line)
+  );
+}
+
+function isLikelyPageShell(text: string) {
+  const words = text.split(/\s+/);
+  const facebookWords = words.filter((word) => word.toLowerCase() === "facebook").length;
+  return facebookWords > 8 || facebookWords / Math.max(words.length, 1) > 0.12;
+}
+
+function looksLikePostContainer(element: HTMLElement) {
+  const text = element.innerText?.replace(/\s+/g, " ").trim() ?? "";
+  if (text.length < 24 || text.length > 3200 || isLikelyPageShell(text)) {
+    return false;
+  }
+
+  return Boolean(
+    element.querySelector('[data-ad-preview="message"],[data-ad-comet-preview="message"]') ||
+      /(\bLike\b|\bReply\b|\bShare\b|\bComment\b|View more|Write an answer)/i.test(text),
+  );
 }
 
 function isVisible(element: HTMLElement) {
