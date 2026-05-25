@@ -154,6 +154,22 @@ function composeStructuredText(postText: string, comments: string[]) {
     .join("\n");
 }
 
+function mergeTextList(left: string[], right: string[]) {
+  const seen = new Set<string>();
+  const next: string[] = [];
+
+  for (const value of [...left, ...right]) {
+    const key = value.trim().toLowerCase();
+    if (!key || seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    next.push(value);
+  }
+
+  return next;
+}
+
 export async function ingestSourceEvent(
   payload: SourceEventPayload,
   token: string | null,
@@ -183,6 +199,28 @@ export async function ingestSourceEvent(
   const redactedComments = comments.map(redactOperationalText);
   const redactedTitle =
     postTitle ? redactOperationalText(postTitle) : summariseForTitle(redactedPostText);
+
+  const duplicateEvent = await store.findDuplicateSourceEvent(textHash);
+  if (duplicateEvent) {
+    const mergedComments = mergeTextList(duplicateEvent.comments ?? [], redactedComments);
+    const mergedMediaUrls = mergeTextList(duplicateEvent.media_urls ?? [], mediaUrls);
+    const updatedEvent =
+      mergedComments.length !== (duplicateEvent.comments ?? []).length ||
+      mergedMediaUrls.length !== (duplicateEvent.media_urls ?? []).length
+        ? await store.updateSourceEventMedia(
+            duplicateEvent.id,
+            mergedComments,
+            mergedMediaUrls,
+          )
+        : duplicateEvent;
+
+    return {
+      event: updatedEvent ?? duplicateEvent,
+      case: null,
+      duplicate: null,
+      classification,
+    };
+  }
 
   if (duplicate) {
     const event = await store.createSourceEvent({

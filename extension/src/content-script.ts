@@ -19,11 +19,10 @@ type StructuredPost = {
 type InspectOptions = {
   submitAll?: boolean;
   rememberOnly?: boolean;
-  markSeenOnly?: boolean;
   notify?: boolean;
 };
 
-const backfillLimit = 20;
+const backfillLimit = 60;
 const commentSelector =
   '[aria-label^="Comment by" i],[aria-label*=" Comment by" i]';
 
@@ -87,7 +86,7 @@ async function start() {
   observer.observe(document.body, { childList: true, subtree: true });
 
   for (const node of collectCandidateContainers()) {
-    void inspectNode(node, { submitAll: true, markSeenOnly: true });
+    void inspectNode(node, { submitAll: true });
   }
 }
 
@@ -210,11 +209,6 @@ async function inspectStructuredPost(
   }
 
   const id = await hashText(`${window.location.href}:${text}`);
-
-  if (options.markSeenOnly) {
-    seen.add(id);
-    return "skipped";
-  }
 
   const issue: DetectedIssue = {
     id,

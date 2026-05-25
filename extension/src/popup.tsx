@@ -136,7 +136,7 @@ function Popup() {
       <p className="hint">
         Leave the authorised Facebook group open for live monitoring. New visible
         post cards are sent to dashboard review with comments and visible images;
-        the backfill button sends the latest 20 loaded cards.
+        the backfill button sends up to 60 loaded cards.
       </p>
       {backfillResult ? (
         <div className={backfillResult.ok ? "status" : "status error"}>

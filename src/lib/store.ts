@@ -110,6 +110,7 @@ export interface DataStore {
   listDashboard(): Promise<DashboardSnapshot>;
   listLocations(): Promise<SiteLocation[]>;
   findDuplicateCase(textHash: string): Promise<CaseRecord | null>;
+  findDuplicateSourceEvent(textHash: string): Promise<SourceEvent | null>;
   getLocationIdByName(name: string | null): Promise<string | null>;
   getSourceEvent(id: string): Promise<SourceEvent | null>;
   validateSourceToken(
@@ -131,6 +132,11 @@ export interface DataStore {
         | "acknowledged_at"
       >
     >,
+  ): Promise<SourceEvent | null>;
+  updateSourceEventMedia(
+    id: string,
+    comments: string[],
+    mediaUrls: string[],
   ): Promise<SourceEvent | null>;
   createCase(record: NewCase): Promise<CaseRecord>;
   updateCase(
@@ -187,6 +193,10 @@ class MemoryStore implements DataStore {
 
   async findDuplicateCase(textHash: string) {
     return this.cases.find((record) => record.text_hash === textHash) ?? null;
+  }
+
+  async findDuplicateSourceEvent(textHash: string) {
+    return this.sourceEvents.find((event) => event.text_hash === textHash) ?? null;
   }
 
   async getLocationIdByName(name: string | null) {
@@ -261,6 +271,26 @@ class MemoryStore implements DataStore {
     this.audit("source_event.updated", "source_events", target.id, updates);
     return target;
   }
+
+  async updateSourceEventMedia(
+    eventId: string,
+    comments: string[],
+    mediaUrls: string[],
+  ) {
+    const target = this.sourceEvents.find((event) => event.id === eventId);
+    if (!target) {
+      return null;
+    }
+
+    target.comments = comments;
+    target.media_urls = mediaUrls;
+    this.audit("source_event.media_updated", "source_events", target.id, {
+      comments: comments.length,
+      media_urls: mediaUrls.length,
+    });
+    return target;
+  }
+
 
   async createCase(record: NewCase) {
     const createdAt = now();
@@ -723,6 +753,17 @@ class SupabaseStore implements DataStore {
     return data ? normaliseCaseRecord(data as CaseRecord) : null;
   }
 
+  async findDuplicateSourceEvent(textHash: string) {
+    const { data, error } = await this.table("source_events")
+      .select("*")
+      .eq("text_hash", textHash)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (error) throw error;
+    return data ? normaliseSourceEvent(data as SourceEvent) : null;
+  }
+
   async getLocationIdByName(name: string | null) {
     if (!name) return null;
     const { data, error } = await this.table("site_locations")
@@ -823,6 +864,48 @@ class SupabaseStore implements DataStore {
     await this.audit("source_event.updated", "source_events", eventId, updates);
     return normaliseSourceEvent(data as SourceEvent);
   }
+
+  async updateSourceEventMedia(
+    eventId: string,
+    comments: string[],
+    mediaUrls: string[],
+  ) {
+    const patch = { comments, media_urls: mediaUrls };
+    const { data, error } = await this.table("source_events")
+      .update(patch)
+      .eq("id", eventId)
+      .select()
+      .maybeSingle();
+    let updated = data as SourceEvent | null;
+
+    if (error && isMissingMediaUrlsColumn(error)) {
+      const retry = await this.table("source_events")
+        .update({
+          comments: [...comments, ...mediaCommentMarkers(mediaUrls)],
+        })
+        .eq("id", eventId)
+        .select()
+        .maybeSingle();
+      if (retry.error) throw retry.error;
+      updated = {
+        ...(retry.data as SourceEvent),
+        media_urls: mediaUrls,
+      };
+    } else if (error) {
+      throw error;
+    }
+
+    if (!updated) {
+      return null;
+    }
+
+    await this.audit("source_event.media_updated", "source_events", eventId, {
+      comments: comments.length,
+      media_urls: mediaUrls.length,
+    });
+    return normaliseSourceEvent(updated);
+  }
+
 
   async createCase(record: NewCase) {
     const { data, error } = await this.table("cases")
