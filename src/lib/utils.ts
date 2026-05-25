@@ -9,6 +9,7 @@ export function formatDateTime(value: string) {
   return new Intl.DateTimeFormat("en-GB", {
     dateStyle: "short",
     timeStyle: "short",
+    timeZone: "Europe/London",
   }).format(new Date(value));
 }
 

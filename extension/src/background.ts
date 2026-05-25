@@ -33,8 +33,10 @@ async function handleMessage(message: {
 }) {
   if (message.type === "DETECTED_ISSUE" && message.issue) {
     const issue = await storeDetection(message.issue);
+    let submitted = false;
     if (message.submitNow || issue.severity === "Critical") {
       await submitDetection(issue.id);
+      submitted = true;
       if (issue.severity === "Critical") {
         try {
           await chrome.notifications.create({
@@ -48,7 +50,7 @@ async function handleMessage(message: {
         }
       }
     }
-    return { ok: true, submitted: Boolean(issue.submittedAt) };
+    return { ok: true, submitted };
   }
 
   if (message.type === "SUBMIT_DETECTION" && message.issueId) {
