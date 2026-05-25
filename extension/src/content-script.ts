@@ -390,12 +390,13 @@ function extractStructuredPost(node: HTMLElement): StructuredPost | null {
 async function expandVisiblePostBody(node: HTMLElement) {
   const container = node.closest<HTMLElement>('article,[role="article"]') ?? node;
   const firstComment = container.querySelector<HTMLElement>(commentSelector);
-  const clickableSelector = 'button,[role="button"],div[tabindex="0"],span[tabindex="0"]';
+  const clickableSelector =
+    'button,[role="button"],a[role="link"],a[href],div[tabindex="0"],span[tabindex="0"]';
   const explicitControls = [...container.querySelectorAll<HTMLElement>(clickableSelector)];
   const labelledControls = [
     ...container.querySelectorAll<HTMLElement>("span,div"),
   ]
-    .filter((element) => /^see more$/i.test(elementLabel(element)))
+    .filter((element) => isPostBodySeeMoreLabel(elementLabel(element)))
     .map(
       (element) =>
         element.closest<HTMLElement>(clickableSelector) ?? element,
@@ -417,16 +418,21 @@ async function expandVisiblePostBody(node: HTMLElement) {
 
 function hasSeeMoreLabel(element: HTMLElement) {
   return (
-    /^see more$/i.test(elementLabel(element)) ||
+    isPostBodySeeMoreLabel(elementLabel(element)) ||
     [...element.querySelectorAll<HTMLElement>("span,div")].some((child) =>
-      /^see more$/i.test(elementLabel(child)),
+      isPostBodySeeMoreLabel(elementLabel(child)),
     )
   );
+}
+
+function isPostBodySeeMoreLabel(label: string) {
+  return /^see more(?:$|\s+of this post$)/i.test(label);
 }
 
 function elementLabel(element: HTMLElement) {
   return (
     element.innerText ||
+    element.textContent ||
     element.getAttribute("aria-label") ||
     element.getAttribute("title") ||
     ""
