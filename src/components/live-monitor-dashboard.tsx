@@ -12,6 +12,7 @@ import {
   PanelLeftOpen,
   QrCode,
   RefreshCw,
+  Search,
   Send,
   ShieldAlert,
   X,
@@ -53,6 +54,8 @@ const statusOptions: CaseStatus[] = [
   "Ignored / Not Relevant",
 ];
 
+const allFilter = "All";
+
 type PostFeedItem =
   | {
       kind: "event";
@@ -75,6 +78,9 @@ export function LiveMonitorDashboard({
   const [manualText, setManualText] = useState("");
   const [connectionError, setConnectionError] = useState<string | null>(null);
   const [postsDrawerOpen, setPostsDrawerOpen] = useState(false);
+  const [triageCategory, setTriageCategory] = useState(allFilter);
+  const [triageRelevance, setTriageRelevance] = useState(allFilter);
+  const [triageQuery, setTriageQuery] = useState("");
   const [manualBusy, startManualTransition] = useTransition();
   const [refreshing, startRefreshTransition] = useTransition();
 
@@ -115,6 +121,24 @@ export function LiveMonitorDashboard({
       !event.converted_case_id &&
       !event.ignored,
   );
+  const filteredReviewEvents = useMemo(
+    () =>
+      filterReviewEvents(reviewEvents, {
+        category: triageCategory,
+        relevance: triageRelevance,
+        query: triageQuery,
+      }),
+    [reviewEvents, triageCategory, triageQuery, triageRelevance],
+  );
+  const reviewCategories = useMemo(
+    () => buildFilterOptions(reviewEvents.map((event) => event.predicted_category)),
+    [reviewEvents],
+  );
+  const reviewRelevances = useMemo(
+    () => buildFilterOptions(reviewEvents.map((event) => event.relevance)),
+    [reviewEvents],
+  );
+  const triageSummary = useMemo(() => buildTriageSummary(reviewEvents), [reviewEvents]);
   const postFeedCount = useMemo(
     () => buildPostFeedItems(snapshot.source_events, snapshot.cases).length,
     [snapshot.source_events, snapshot.cases],
@@ -235,11 +259,27 @@ export function LiveMonitorDashboard({
           <Card>
             <CardHeader
               title="Needs triage"
-              meta={`${reviewEvents.length} posts waiting for control-room review`}
+              meta={`${filteredReviewEvents.length} of ${reviewEvents.length} posts visible`}
+            />
+            <TriageControls
+              category={triageCategory}
+              categoryOptions={reviewCategories}
+              onCategoryChange={setTriageCategory}
+              onQueryChange={setTriageQuery}
+              onRelevanceChange={setTriageRelevance}
+              onReset={() => {
+                setTriageCategory(allFilter);
+                setTriageRelevance(allFilter);
+                setTriageQuery("");
+              }}
+              query={triageQuery}
+              relevance={triageRelevance}
+              relevanceOptions={reviewRelevances}
+              summary={triageSummary}
             />
             <div className="divide-y divide-border">
-              {reviewEvents.length ? (
-                reviewEvents.map((event) => (
+              {filteredReviewEvents.length ? (
+                filteredReviewEvents.map((event) => (
                   <SourceEventRow
                     key={event.id}
                     event={event}
@@ -255,7 +295,7 @@ export function LiveMonitorDashboard({
                 ))
               ) : (
                 <div className="px-4 py-8 text-center text-sm text-muted-foreground">
-                  No source events waiting review.
+                  No posts match the active filters.
                 </div>
               )}
             </div>
@@ -498,6 +538,108 @@ function Metric({
       >
         {value}
       </p>
+    </div>
+  );
+}
+
+function TriageControls({
+  category,
+  categoryOptions,
+  onCategoryChange,
+  onQueryChange,
+  onReset,
+  onRelevanceChange,
+  query,
+  relevance,
+  relevanceOptions,
+  summary,
+}: {
+  category: string;
+  categoryOptions: Array<{ label: string; count: number }>;
+  onCategoryChange: (value: string) => void;
+  onQueryChange: (value: string) => void;
+  onReset: () => void;
+  onRelevanceChange: (value: string) => void;
+  query: string;
+  relevance: string;
+  relevanceOptions: Array<{ label: string; count: number }>;
+  summary: Array<{ label: string; value: number; className: string }>;
+}) {
+  const filtersActive =
+    category !== allFilter || relevance !== allFilter || query.trim().length > 0;
+
+  return (
+    <div className="border-b border-border bg-slate-50/70 p-4">
+      <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+        {summary.map((item) => (
+          <div
+            key={item.label}
+            className={cn(
+              "flex items-center justify-between rounded-md border px-3 py-2 text-sm",
+              item.className,
+            )}
+          >
+            <span className="font-medium">{item.label}</span>
+            <span className="text-base font-semibold">{item.value}</span>
+          </div>
+        ))}
+      </div>
+
+      <div className="mt-3 grid gap-2 lg:grid-cols-[minmax(0,1fr)_13rem_13rem_auto]">
+        <label className="relative block">
+          <span className="sr-only">Search posts and comments</span>
+          <Search
+            aria-hidden
+            className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground"
+          />
+          <input
+            className="h-9 w-full rounded-md border border-border bg-white pl-9 pr-3 text-sm outline-none focus:ring-2 focus:ring-ring"
+            onChange={(event) => onQueryChange(event.target.value)}
+            placeholder="Search posts or comments"
+            value={query}
+          />
+        </label>
+
+        <label className="block">
+          <span className="sr-only">Category filter</span>
+          <select
+            className="h-9 w-full rounded-md border border-border bg-white px-2 text-sm outline-none focus:ring-2 focus:ring-ring"
+            onChange={(event) => onCategoryChange(event.target.value)}
+            value={category}
+          >
+            {categoryOptions.map((option) => (
+              <option key={option.label} value={option.label}>
+                {option.label} ({option.count})
+              </option>
+            ))}
+          </select>
+        </label>
+
+        <label className="block">
+          <span className="sr-only">Relevance filter</span>
+          <select
+            className="h-9 w-full rounded-md border border-border bg-white px-2 text-sm outline-none focus:ring-2 focus:ring-ring"
+            onChange={(event) => onRelevanceChange(event.target.value)}
+            value={relevance}
+          >
+            {relevanceOptions.map((option) => (
+              <option key={option.label} value={option.label}>
+                {option.label} ({option.count})
+              </option>
+            ))}
+          </select>
+        </label>
+
+        <Button
+          disabled={!filtersActive}
+          onClick={onReset}
+          size="sm"
+          type="button"
+          variant="secondary"
+        >
+          Reset
+        </Button>
+      </div>
     </div>
   );
 }
@@ -797,6 +939,7 @@ function SourceEventRow({
   const severityForEscalation =
     event.predicted_severity === "Low" ? "Medium" : event.predicted_severity;
   const text = event.post_text || event.redacted_text;
+  const lane = operationalLane(event);
 
   return (
     <article id={`source-event-${event.id}`} className="scroll-mt-24 p-4">
@@ -805,6 +948,7 @@ function SourceEventRow({
           <div className="flex flex-wrap items-center gap-2">
             <SeverityBadge severity={event.predicted_severity} />
             <Badge>{event.relevance}</Badge>
+            <Badge className={lane.className}>{lane.label}</Badge>
             <Badge>{event.predicted_category}</Badge>
           </div>
           <h3 className="mt-3 text-base font-semibold">
@@ -1068,6 +1212,173 @@ function BreakdownCard({
       </div>
     </Card>
   );
+}
+
+function buildFilterOptions(values: string[]) {
+  const counts = new Map<string, number>();
+  for (const value of values) {
+    counts.set(value, (counts.get(value) ?? 0) + 1);
+  }
+
+  return [
+    { label: allFilter, count: values.length },
+    ...[...counts.entries()]
+      .map(([label, count]) => ({ label, count }))
+      .sort((left, right) => right.count - left.count || left.label.localeCompare(right.label)),
+  ];
+}
+
+function filterReviewEvents(
+  events: SourceEvent[],
+  filters: { category: string; relevance: string; query: string },
+) {
+  const query = filters.query.trim().toLowerCase();
+
+  return [...events]
+    .filter((event) => {
+      if (filters.category !== allFilter && event.predicted_category !== filters.category) {
+        return false;
+      }
+
+      if (filters.relevance !== allFilter && event.relevance !== filters.relevance) {
+        return false;
+      }
+
+      if (!query) {
+        return true;
+      }
+
+      const searchableText = [
+        event.post_title,
+        event.post_text,
+        event.redacted_text,
+        event.predicted_category,
+        event.relevance,
+        event.classification_reason,
+        ...(event.comments ?? []),
+      ]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase();
+
+      return searchableText.includes(query);
+    })
+    .sort((left, right) => {
+      const priorityDelta = reviewEventPriority(right) - reviewEventPriority(left);
+      if (priorityDelta !== 0) {
+        return priorityDelta;
+      }
+
+      return new Date(right.created_at).getTime() - new Date(left.created_at).getTime();
+    });
+}
+
+function reviewEventPriority(event: SourceEvent) {
+  const severityScore = {
+    Critical: 400,
+    High: 300,
+    Medium: 200,
+    Low: 100,
+  }[event.predicted_severity];
+  const relevanceScore = {
+    Actionable: 80,
+    "Needs review": 60,
+    Information: 20,
+    "Not relevant": 0,
+  }[event.relevance];
+  const categoryScore = {
+    Security: 40,
+    Welfare: 38,
+    Facilities: 30,
+    "KSS / external": 28,
+    "Access admin": 24,
+    "Travel / parking": 20,
+    Campsite: 18,
+    Information: 0,
+  }[event.predicted_category] ?? 10;
+
+  return severityScore + relevanceScore + categoryScore;
+}
+
+function buildTriageSummary(events: SourceEvent[]) {
+  const count = (predicate: (event: SourceEvent) => boolean) =>
+    events.filter(predicate).length;
+
+  return [
+    {
+      label: "Needs review",
+      value: count((event) => event.relevance === "Needs review"),
+      className: "border-amber-200 bg-amber-50 text-amber-950",
+    },
+    {
+      label: "Welfare",
+      value: count((event) => event.predicted_category === "Welfare"),
+      className: "border-sky-200 bg-sky-50 text-sky-950",
+    },
+    {
+      label: "Security",
+      value: count((event) => event.predicted_category === "Security"),
+      className: "border-red-200 bg-red-50 text-red-950",
+    },
+    {
+      label: "KSS / external",
+      value: count(
+        (event) =>
+          event.predicted_category === "KSS / external" ||
+          event.predicted_category === "Access admin",
+      ),
+      className: "border-teal-200 bg-teal-50 text-teal-950",
+    },
+  ];
+}
+
+function operationalLane(event: SourceEvent) {
+  if (
+    event.predicted_severity === "Critical" ||
+    event.predicted_severity === "High" ||
+    event.relevance === "Actionable"
+  ) {
+    return {
+      label: "Action lane",
+      className: "bg-red-100 text-red-950 ring-red-200",
+    };
+  }
+
+  if (event.predicted_category === "Security") {
+    return {
+      label: "Security",
+      className: "bg-red-50 text-red-950 ring-red-200",
+    };
+  }
+
+  if (event.predicted_category === "Welfare") {
+    return {
+      label: "Welfare",
+      className: "bg-sky-50 text-sky-950 ring-sky-200",
+    };
+  }
+
+  if (
+    event.predicted_category === "KSS / external" ||
+    event.predicted_category === "Access admin"
+  ) {
+    return {
+      label: "KSS check",
+      className: "bg-teal-50 text-teal-950 ring-teal-200",
+    };
+  }
+
+  if (event.relevance === "Information" || event.relevance === "Not relevant") {
+    return {
+      label: "Info only",
+      className: "bg-slate-100 text-slate-700 ring-slate-200",
+    };
+  }
+
+  return {
+    label: "Ops review",
+    className: "bg-amber-50 text-amber-950 ring-amber-200",
+  };
 }
 
 function buildSummary(snapshot: DashboardSnapshot) {
