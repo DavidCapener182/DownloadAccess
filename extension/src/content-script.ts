@@ -390,33 +390,53 @@ function extractStructuredPost(node: HTMLElement): StructuredPost | null {
 async function expandVisiblePostBody(node: HTMLElement) {
   const container = node.closest<HTMLElement>('article,[role="article"]') ?? node;
   const firstComment = container.querySelector<HTMLElement>(commentSelector);
-  const controls = [
-    ...container.querySelectorAll<HTMLElement>(
-      'button,[role="button"],div[tabindex="0"],span[tabindex="0"]',
-    ),
-  ].filter((element) => {
-    const label = (
-      element.innerText ||
-      element.getAttribute("aria-label") ||
-      element.getAttribute("title") ||
-      ""
-    )
-      .replace(/\s+/g, " ")
-      .trim();
-
-    return (
-      /^see more$/i.test(label) &&
+  const clickableSelector = 'button,[role="button"],div[tabindex="0"],span[tabindex="0"]';
+  const explicitControls = [...container.querySelectorAll<HTMLElement>(clickableSelector)];
+  const labelledControls = [
+    ...container.querySelectorAll<HTMLElement>("span,div"),
+  ]
+    .filter((element) => /^see more$/i.test(elementLabel(element)))
+    .map(
+      (element) =>
+        element.closest<HTMLElement>(clickableSelector) ?? element,
+    );
+  const controls = uniqueElements([...explicitControls, ...labelledControls]).filter(
+    (element) =>
+      hasSeeMoreLabel(element) &&
       isVisible(element) &&
       !isInsideCommentContainer(element) &&
       isBeforeFirstComment(element, firstComment) &&
-      !isPostActionButton(element)
-    );
-  });
+      !isPostActionButton(element),
+  );
 
   for (const control of controls.slice(0, 3)) {
     control.click();
     await wait(150);
   }
+}
+
+function hasSeeMoreLabel(element: HTMLElement) {
+  return (
+    /^see more$/i.test(elementLabel(element)) ||
+    [...element.querySelectorAll<HTMLElement>("span,div")].some((child) =>
+      /^see more$/i.test(elementLabel(child)),
+    )
+  );
+}
+
+function elementLabel(element: HTMLElement) {
+  return (
+    element.innerText ||
+    element.getAttribute("aria-label") ||
+    element.getAttribute("title") ||
+    ""
+  )
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function uniqueElements(elements: HTMLElement[]) {
+  return elements.filter((element, index) => elements.indexOf(element) === index);
 }
 
 function extractMediaUrls(container: HTMLElement) {
