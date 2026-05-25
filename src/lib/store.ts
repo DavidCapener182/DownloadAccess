@@ -32,6 +32,7 @@ function isActiveSource(source: Source | null | undefined) {
 }
 
 const mediaCommentPrefix = "[image] ";
+const sourceEventFeedLimit = 40;
 
 function mediaCommentMarkers(urls: string[]) {
   return urls.map((url) => `${mediaCommentPrefix}${url}`);
@@ -118,6 +119,10 @@ export interface DataStore {
     requestedSourceId?: string | null,
   ): Promise<Source | null>;
   createSourceEvent(event: NewSourceEvent): Promise<SourceEvent>;
+  pruneReplaceableSourceEvents(
+    limit?: number,
+    preserveEventId?: string,
+  ): Promise<number>;
   updateSourceEvent(
     id: string,
     updates: Partial<
@@ -178,7 +183,9 @@ class MemoryStore implements DataStore {
     return {
       cases: [...this.cases].sort(sortByNewest),
       alerts: [...this.alerts].sort(sortByNewest),
-      source_events: [...this.sourceEvents].sort(sortByNewest).slice(0, 60),
+      source_events: [...this.sourceEvents]
+        .sort(sortByNewest)
+        .slice(0, sourceEventFeedLimit),
       case_actions: [...this.caseActions].sort(sortByNewest).slice(0, 80),
       profiles: [...this.profiles],
       sources: [...this.sources],
@@ -245,6 +252,44 @@ class MemoryStore implements DataStore {
       ignored: event.ignored,
     });
     return created;
+  }
+
+  async pruneReplaceableSourceEvents(
+    limit = sourceEventFeedLimit,
+    preserveEventId?: string,
+  ) {
+    let deleted = 0;
+
+    while (this.sourceEvents.length > limit) {
+      const oldestReplaceable = [...this.sourceEvents]
+        .sort(sortByOldest)
+        .find(
+          (event) =>
+            event.id !== preserveEventId &&
+            event.review_status !== "Escalated" &&
+            !this.cases.some((record) => record.source_event_id === event.id),
+        );
+
+      if (!oldestReplaceable) {
+        break;
+      }
+
+      this.sourceEvents = this.sourceEvents.filter(
+        (event) => event.id !== oldestReplaceable.id,
+      );
+      deleted += 1;
+      this.audit(
+        "source_event.rolling_pruned",
+        "source_events",
+        oldestReplaceable.id,
+        {
+          limit,
+          preserve_event_id: preserveEventId ?? null,
+        },
+      );
+    }
+
+    return deleted;
   }
 
   async updateSourceEvent(
@@ -716,7 +761,11 @@ class SupabaseStore implements DataStore {
     ] = await Promise.all([
       this.selectMany<CaseRecord>("cases", "created_at", 100),
       this.selectMany<Alert>("alerts", "created_at", 100),
-      this.selectMany<SourceEvent>("source_events", "created_at", 60),
+      this.selectMany<SourceEvent>(
+        "source_events",
+        "created_at",
+        sourceEventFeedLimit,
+      ),
       this.selectMany<CaseAction>("case_actions", "created_at", 80),
       this.selectMany<Profile>("profiles", "created_at", 100),
       this.selectMany<Source>("sources", "created_at", 100),
@@ -837,6 +886,74 @@ class SupabaseStore implements DataStore {
       ignored: event.ignored,
     });
     return normaliseSourceEvent(created);
+  }
+
+  async pruneReplaceableSourceEvents(
+    limit = sourceEventFeedLimit,
+    preserveEventId?: string,
+  ) {
+    let deleted = 0;
+
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      const { data, error, count } = await this.table("source_events")
+        .select("id, review_status, created_at", { count: "exact" })
+        .order("created_at", { ascending: false })
+        .limit(Math.max(limit + 100, 150));
+
+      if (error) throw error;
+
+      const total = count ?? data?.length ?? 0;
+      const excess = total - limit;
+      if (excess <= 0 || !data?.length) {
+        break;
+      }
+
+      const candidateIds = [...data]
+        .reverse()
+        .filter(
+          (event) =>
+            event.id !== preserveEventId && event.review_status !== "Escalated",
+        )
+        .map((event) => event.id)
+        .filter((eventId): eventId is string => typeof eventId === "string");
+
+      if (!candidateIds.length) {
+        break;
+      }
+
+      const { data: linkedCases, error: linkedCasesError } = await this.table("cases")
+        .select("source_event_id")
+        .in("source_event_id", candidateIds);
+      if (linkedCasesError) throw linkedCasesError;
+
+      const linkedEventIds = new Set(
+        (linkedCases ?? [])
+          .map((record) => record.source_event_id)
+          .filter((eventId): eventId is string => typeof eventId === "string"),
+      );
+
+      const idsToDelete = candidateIds
+        .filter((eventId) => !linkedEventIds.has(eventId))
+        .slice(0, excess);
+
+      if (!idsToDelete.length) {
+        break;
+      }
+
+      const { error: deleteError } = await this.table("source_events")
+        .delete()
+        .in("id", idsToDelete);
+      if (deleteError) throw deleteError;
+
+      deleted += idsToDelete.length;
+      await this.audit("source_event.rolling_pruned", "source_events", null, {
+        limit,
+        deleted_ids: idsToDelete,
+        preserve_event_id: preserveEventId ?? null,
+      });
+    }
+
+    return deleted;
   }
 
   async updateSourceEvent(
@@ -1195,6 +1312,10 @@ class SupabaseStore implements DataStore {
 
 function sortByNewest(a: { created_at: string }, b: { created_at: string }) {
   return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+}
+
+function sortByOldest(a: { created_at: string }, b: { created_at: string }) {
+  return new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
 }
 
 declare global {

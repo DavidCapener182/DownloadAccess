@@ -15,6 +15,7 @@ const severityRank: Record<Severity, number> = {
   High: 3,
   Critical: 4,
 };
+const sourceEventFeedLimit = 40;
 
 const validStatuses: CaseStatus[] = [
   "New",
@@ -247,6 +248,8 @@ export async function ingestSourceEvent(
       ignored_reason: "Duplicate of existing case.",
     });
 
+    await store.pruneReplaceableSourceEvents(sourceEventFeedLimit, event.id);
+
     return { event, case: null, duplicate, classification };
   }
 
@@ -318,6 +321,8 @@ export async function ingestSourceEvent(
     });
     event = updatedEvent ?? event;
   }
+
+  await store.pruneReplaceableSourceEvents(sourceEventFeedLimit, event.id);
 
   return { event, case: createdCase, duplicate: null, classification };
 }

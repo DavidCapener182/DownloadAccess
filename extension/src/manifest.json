@@ -8,7 +8,7 @@
     "48": "icon.svg",
     "128": "icon.svg"
   },
-  "permissions": ["activeTab", "notifications", "storage"],
+  "permissions": ["activeTab", "notifications", "storage", "tabs", "scripting"],
   "host_permissions": ["<all_urls>"],
   "background": {
     "service_worker": "background.js"

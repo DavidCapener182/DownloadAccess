@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { getSettings, normalisePageUrl, pageAllowed, saveSettings } from "./settings";
 import type {
@@ -15,12 +15,12 @@ function Popup() {
   const [currentPage, setCurrentPage] = useState("");
   const [backfillResult, setBackfillResult] = useState<BackfillResult | null>(null);
   const [backfillBusy, setBackfillBusy] = useState(false);
+  const autoBackfillStarted = useRef(false);
+  const autoBackfill = new URLSearchParams(window.location.search).get(
+    "autobackfill",
+  ) === "1";
 
-  useEffect(() => {
-    void refresh();
-  }, []);
-
-  async function refresh() {
+  const refresh = useCallback(async () => {
     const nextSettings = await getSettings();
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
     const hostname = tab.url ? new URL(tab.url).hostname : "";
@@ -30,32 +30,21 @@ function Popup() {
     setHost(hostname);
     setCurrentPage(pageUrl);
     setRecent(stored.recentDetections ?? []);
-  }
+  }, []);
 
-  if (!settings) {
-    return <Shell>Loading...</Shell>;
-  }
-
-  const enabled = pageAllowed(
-    currentPage,
-    host,
-    settings.allowedDomains,
-    settings.allowedPageUrls,
-  );
-
-  async function backfillVisiblePosts() {
+  const backfillVisiblePosts = useCallback(async () => {
     setBackfillBusy(true);
     setBackfillResult(null);
 
     try {
-      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-      if (!tab.id) {
-        throw new Error("No active tab found.");
+      const tab = await findBackfillTab(settings);
+      if (!tab?.id) {
+        throw new Error(
+          "No enabled Facebook group tab found. Open the group page, scroll to load posts, then try again.",
+        );
       }
 
-      const response = (await chrome.tabs.sendMessage(tab.id, {
-        type: "BACKFILL_VISIBLE",
-      })) as BackfillResult;
+      const response = await requestBackfill(tab.id);
 
       setBackfillResult(response);
       await refresh();
@@ -74,7 +63,34 @@ function Popup() {
     } finally {
       setBackfillBusy(false);
     }
+  }, [refresh, settings]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      void refresh();
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [refresh]);
+
+  useEffect(() => {
+    if (!settings || !autoBackfill || autoBackfillStarted.current) {
+      return;
+    }
+
+    autoBackfillStarted.current = true;
+    void backfillVisiblePosts();
+  }, [settings, autoBackfill, backfillVisiblePosts]);
+
+  if (!settings) {
+    return <Shell>Loading...</Shell>;
   }
+
+  const enabled = pageAllowed(
+    currentPage,
+    host,
+    settings.allowedDomains,
+    settings.allowedPageUrls,
+  );
 
   return (
     <Shell>
@@ -136,8 +152,14 @@ function Popup() {
       <p className="hint">
         Leave the authorised Facebook group open for live monitoring. New visible
         post cards are sent to dashboard review with comments and visible images;
-        the backfill button sends up to 60 loaded cards.
+        the backfill button sends up to 40 loaded cards.
       </p>
+      {autoBackfill ? (
+        <p className="hint">
+          Auto backfill mode is enabled. This page will target the allowed Facebook
+          group tab directly.
+        </p>
+      ) : null}
       {backfillResult ? (
         <div className={backfillResult.ok ? "status" : "status error"}>
           {backfillResult.ok
@@ -198,6 +220,81 @@ function Popup() {
       </div>
     </Shell>
   );
+}
+
+async function findBackfillTab(settings: ExtensionSettings | null) {
+  if (!settings) {
+    throw new Error("Extension settings are still loading.");
+  }
+
+  const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  if (isAllowedMonitoringTab(activeTab, settings)) {
+    return activeTab;
+  }
+
+  const tabs = await chrome.tabs.query({});
+  return (
+    tabs.find(
+      (tab) =>
+        tab.active &&
+        isAllowedMonitoringTab(tab, settings) &&
+        /facebook\.com\/groups\//i.test(tab.url ?? ""),
+    ) ??
+    tabs.find(
+      (tab) =>
+        isAllowedMonitoringTab(tab, settings) &&
+        /facebook\.com\/groups\//i.test(tab.url ?? ""),
+    ) ??
+    tabs.find((tab) => isAllowedMonitoringTab(tab, settings))
+  );
+}
+
+function isAllowedMonitoringTab(tab: chrome.tabs.Tab | undefined, settings: ExtensionSettings) {
+  if (!tab?.url) {
+    return false;
+  }
+
+  try {
+    const url = new URL(tab.url);
+    return pageAllowed(
+      tab.url,
+      url.hostname,
+      settings.allowedDomains,
+      settings.allowedPageUrls,
+    );
+  } catch {
+    return false;
+  }
+}
+
+async function requestBackfill(tabId: number) {
+  try {
+    return (await chrome.tabs.sendMessage(tabId, {
+      type: "BACKFILL_VISIBLE",
+    })) as BackfillResult;
+  } catch (error) {
+    if (!isMissingContentScriptError(error)) {
+      throw error;
+    }
+
+    await injectContentScript(tabId);
+    return (await chrome.tabs.sendMessage(tabId, {
+      type: "BACKFILL_VISIBLE",
+    })) as BackfillResult;
+  }
+}
+
+function isMissingContentScriptError(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+  return /receiving end does not exist|could not establish connection/i.test(message);
+}
+
+async function injectContentScript(tabId: number) {
+  await chrome.scripting.executeScript({
+    target: { tabId },
+    files: ["content-script.js"],
+  });
+  await new Promise((resolve) => window.setTimeout(resolve, 250));
 }
 
 function Shell({ children }: { children: React.ReactNode }) {

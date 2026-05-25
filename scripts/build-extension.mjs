@@ -12,6 +12,7 @@ await mkdir(dist, { recursive: true });
 await Promise.all([
   cp(path.join(src, "manifest.json"), path.join(dist, "manifest.json")),
   cp(path.join(src, "popup.html"), path.join(dist, "popup.html")),
+  cp(path.join(src, "reload.html"), path.join(dist, "reload.html")),
   cp(path.join(src, "options.html"), path.join(dist, "options.html")),
   cp(path.join(src, "icon.svg"), path.join(dist, "icon.svg")),
 ]);
@@ -21,6 +22,7 @@ await build({
     path.join(src, "background.ts"),
     path.join(src, "content-script.ts"),
     path.join(src, "popup.tsx"),
+    path.join(src, "reload.ts"),
     path.join(src, "options.tsx"),
   ],
   bundle: true,

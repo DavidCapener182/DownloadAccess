@@ -22,7 +22,7 @@ type InspectOptions = {
   notify?: boolean;
 };
 
-const backfillLimit = 60;
+const backfillLimit = 40;
 const commentSelector =
   '[aria-label^="Comment by" i],[aria-label*=" Comment by" i]';
 
