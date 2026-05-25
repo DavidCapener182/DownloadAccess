@@ -19,6 +19,7 @@ export type DetectedIssue = {
   title: string;
   postText: string;
   comments: string[];
+  mediaUrls: string[];
   redactedText: string;
   severity: Severity;
   category: string;

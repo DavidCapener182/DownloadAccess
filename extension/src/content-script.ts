@@ -11,8 +11,16 @@ type StructuredPost = {
   title: string;
   postText: string;
   comments: string[];
+  mediaUrls: string[];
   combinedText: string;
   sourceUrl: string;
+};
+
+type InspectOptions = {
+  submitAll?: boolean;
+  rememberOnly?: boolean;
+  markSeenOnly?: boolean;
+  notify?: boolean;
 };
 
 const backfillLimit = 20;
@@ -69,7 +77,7 @@ async function start() {
       for (const node of mutation.addedNodes) {
         if (node instanceof HTMLElement) {
           for (const candidate of collectCandidateContainers(node)) {
-            void inspectNode(candidate);
+            void inspectNode(candidate, { submitAll: true, notify: true });
           }
         }
       }
@@ -79,7 +87,7 @@ async function start() {
   observer.observe(document.body, { childList: true, subtree: true });
 
   for (const node of collectCandidateContainers()) {
-    void inspectNode(node);
+    void inspectNode(node, { submitAll: true, markSeenOnly: true });
   }
 }
 
@@ -161,7 +169,7 @@ async function backfillVisiblePosts(): Promise<BackfillResult> {
 
 async function inspectNode(
   node: HTMLElement,
-  options: { submitAll?: boolean; rememberOnly?: boolean } = {},
+  options: InspectOptions = {},
 ): Promise<"submitted" | "queued" | "skipped"> {
   if (!isVisible(node)) {
     return "skipped";
@@ -177,7 +185,7 @@ async function inspectNode(
 
 async function inspectStructuredPost(
   structured: StructuredPost,
-  options: { submitAll?: boolean; rememberOnly?: boolean } = {},
+  options: InspectOptions = {},
 ): Promise<"submitted" | "queued" | "skipped"> {
   const text = structured.combinedText;
 
@@ -202,12 +210,19 @@ async function inspectStructuredPost(
   }
 
   const id = await hashText(`${window.location.href}:${text}`);
+
+  if (options.markSeenOnly) {
+    seen.add(id);
+    return "skipped";
+  }
+
   const issue: DetectedIssue = {
     id,
     text,
     title: structured.title,
     postText: structured.postText,
     comments: structured.comments,
+    mediaUrls: structured.mediaUrls,
     redactedText: classification.redactedText,
     severity: classification.severity,
     category: classification.category,
@@ -225,15 +240,6 @@ async function inspectStructuredPost(
   const submitNow = Boolean(options.submitAll);
 
   if (seen.has(id)) {
-    if (submitNow) {
-      const response = await chrome.runtime.sendMessage({
-        type: "DETECTED_ISSUE",
-        issue,
-        submitNow: true,
-      });
-      return response?.submitted ? "submitted" : "queued";
-    }
-
     return "skipped";
   }
 
@@ -244,6 +250,7 @@ async function inspectStructuredPost(
       type: "DETECTED_ISSUE",
       issue,
       submitNow: true,
+      notify: options.notify,
     });
     return response?.submitted ? "submitted" : "queued";
   }
@@ -261,6 +268,7 @@ async function inspectStructuredPost(
   const response = await chrome.runtime.sendMessage({
     type: "DETECTED_ISSUE",
     issue,
+    notify: options.notify,
   });
   return response?.submitted ? "submitted" : "queued";
 }
@@ -271,7 +279,7 @@ function uniqueStructuredPosts(posts: StructuredPost[]) {
 
   for (const post of posts) {
     const key = normaliseForComparison(
-      `${post.title}:${post.postText}:${post.comments.join("|")}`,
+      `${post.title}:${post.postText}:${post.comments.join("|")}:${post.mediaUrls.join("|")}`,
     );
     if (!key || seenPosts.has(key)) {
       continue;
@@ -358,6 +366,7 @@ function extractStructuredPost(node: HTMLElement): StructuredPost | null {
     .map(cleanPostText)
     .filter((comment) => comment.length >= 12)
     .slice(0, 12);
+  const mediaUrls = extractMediaUrls(container);
   const combinedText = composeCombinedText(postText, comments);
 
   if (combinedText.length < 24 || combinedText.length > 2400) {
@@ -372,9 +381,93 @@ function extractStructuredPost(node: HTMLElement): StructuredPost | null {
     title: buildTitle(postText || combinedText),
     postText: postText || combinedText,
     comments,
+    mediaUrls,
     combinedText,
     sourceUrl: extractSourceUrl(container),
   };
+}
+
+function extractMediaUrls(container: HTMLElement) {
+  const urls = new Set<string>();
+  const images = [...container.querySelectorAll<HTMLImageElement>("img")];
+
+  for (const image of images) {
+    if (!isVisible(image) || !looksLikePostMedia(image)) {
+      continue;
+    }
+
+    const url = bestImageUrl(image);
+    if (url) {
+      urls.add(url);
+    }
+
+    if (urls.size >= 8) {
+      break;
+    }
+  }
+
+  return [...urls];
+}
+
+function bestImageUrl(image: HTMLImageElement) {
+  const fromSrcSet = bestSrcSetCandidate(image.getAttribute("srcset") ?? "");
+  const raw =
+    fromSrcSet ||
+    image.currentSrc ||
+    image.src ||
+    image.getAttribute("data-src") ||
+    "";
+
+  try {
+    const url = new URL(raw.trim(), window.location.href);
+    if (url.protocol === "https:" || url.protocol === "http:") {
+      return url.toString();
+    }
+  } catch {
+    return "";
+  }
+
+  return "";
+}
+
+function bestSrcSetCandidate(srcset: string) {
+  if (!srcset.trim()) {
+    return "";
+  }
+
+  const candidates = srcset
+    .split(",")
+    .map((candidate) => {
+      const [url, descriptor = ""] = candidate.trim().split(/\s+/);
+      const score = descriptor.endsWith("w")
+        ? Number.parseFloat(descriptor)
+        : descriptor.endsWith("x")
+          ? Number.parseFloat(descriptor) * 1000
+          : 0;
+      return { url, score: Number.isFinite(score) ? score : 0 };
+    })
+    .filter((candidate) => candidate.url);
+
+  return candidates.sort((left, right) => right.score - left.score)[0]?.url ?? "";
+}
+
+function looksLikePostMedia(image: HTMLImageElement) {
+  const rect = image.getBoundingClientRect();
+  const label = `${image.alt ?? ""} ${image.getAttribute("aria-label") ?? ""}`;
+  const source = image.currentSrc || image.src || "";
+
+  if (rect.width < 96 || rect.height < 72) {
+    return false;
+  }
+
+  if (
+    /(profile|avatar|emoji|sticker|comment with|your profile|reaction)/i.test(label) ||
+    /(emoji|static\.xx\.fbcdn\.net\/images|rsrc\.php)/i.test(source)
+  ) {
+    return false;
+  }
+
+  return true;
 }
 
 function extractPostBody(container: HTMLElement) {
@@ -560,6 +653,7 @@ function extractStructuredPostsFromPageText() {
       title: buildTitle(author ? `${author}: ${postText || comments[0]}` : postText),
       postText: postText || combinedText,
       comments,
+      mediaUrls: [],
       combinedText,
       sourceUrl: window.location.href,
     });
@@ -613,6 +707,7 @@ function extractStructuredPostsFromTimelineText(lines: string[]) {
       title: buildTitle(author ? `${author}: ${postText || comments[0]}` : postText),
       postText: postText || combinedText,
       comments,
+      mediaUrls: [],
       combinedText,
       sourceUrl: window.location.href,
     });

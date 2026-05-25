@@ -85,7 +85,7 @@ function Popup() {
 
       <button
         className={enabled ? "secondary" : "primary"}
-          onClick={async () => {
+        onClick={async () => {
           const allowedPageUrls = enabled
             ? settings.allowedPageUrls.filter(
                 (pageUrl) => normalisePageUrl(pageUrl) !== currentPage,
@@ -134,9 +134,9 @@ function Popup() {
         {backfillBusy ? "Scanning loaded posts..." : "Backfill visible loaded posts"}
       </button>
       <p className="hint">
-        Open the authorised Facebook group, scroll to load the posts you want,
-        then click this. The latest 20 visible post cards are sent to dashboard
-        review with comments; only clearly actionable items become cases.
+        Leave the authorised Facebook group open for live monitoring. New visible
+        post cards are sent to dashboard review with comments and visible images;
+        the backfill button sends the latest 20 loaded cards.
       </p>
       {backfillResult ? (
         <div className={backfillResult.ok ? "status" : "status error"}>
@@ -171,6 +171,9 @@ function Popup() {
                 <span>{new Date(issue.detectedAt).toLocaleTimeString()}</span>
               </div>
               <p>{issue.redactedText}</p>
+              {(issue.mediaUrls ?? []).length ? (
+                <small>{(issue.mediaUrls ?? []).length} visible image attachment(s)</small>
+              ) : null}
               {issue.submittedAt ? <small>Submitted</small> : null}
               {issue.submitError ? <small className="error">{issue.submitError}</small> : null}
               {!issue.submittedAt ? (

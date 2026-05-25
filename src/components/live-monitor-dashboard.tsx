@@ -7,6 +7,7 @@ import {
   Eye,
   ExternalLink,
   FileDown,
+  ImageIcon,
   Megaphone,
   MessageCircle,
   PanelLeftOpen,
@@ -19,7 +20,14 @@ import {
   UserCheck,
 } from "lucide-react";
 import type React from "react";
-import { useCallback, useEffect, useMemo, useState, useTransition } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useTransition,
+} from "react";
 import { Badge, SeverityBadge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardHeader } from "@/components/ui/card";
@@ -55,6 +63,11 @@ const statusOptions: CaseStatus[] = [
 ];
 
 const allFilter = "All";
+const mediaCommentPrefix = "[image] ";
+
+type BrowserNotificationPermission =
+  | NotificationPermission
+  | "unsupported";
 
 type PostFeedItem =
   | {
@@ -81,8 +94,47 @@ export function LiveMonitorDashboard({
   const [triageCategory, setTriageCategory] = useState(allFilter);
   const [triageRelevance, setTriageRelevance] = useState(allFilter);
   const [triageQuery, setTriageQuery] = useState("");
+  const [newEventNotice, setNewEventNotice] = useState<string | null>(null);
+  const [notificationPermission, setNotificationPermission] =
+    useState<BrowserNotificationPermission>(() =>
+      typeof window !== "undefined" && "Notification" in window
+        ? Notification.permission
+        : "unsupported",
+    );
   const [manualBusy, startManualTransition] = useTransition();
   const [refreshing, startRefreshTransition] = useTransition();
+  const seenEventIdsRef = useRef(
+    new Set(initialSnapshot.source_events.map((event) => event.id)),
+  );
+
+  const notifyForNewEvents = useCallback((events: SourceEvent[]) => {
+    const incoming = events.filter((event) => !seenEventIdsRef.current.has(event.id));
+    for (const event of events) {
+      seenEventIdsRef.current.add(event.id);
+    }
+
+    if (!incoming.length) {
+      return;
+    }
+
+    const count = incoming.length;
+    const first = incoming[0];
+    const title =
+      first.post_title || first.predicted_category || "New monitored post";
+    setNewEventNotice(
+      `${count} new monitored post${count === 1 ? "" : "s"} captured for review.`,
+    );
+
+    if (typeof window !== "undefined" && "Notification" in window) {
+      setNotificationPermission(Notification.permission);
+      if (Notification.permission === "granted") {
+        new Notification("KSS Accessibility Live Monitor", {
+          body: title,
+          tag: `source-event-${first.id}`,
+        });
+      }
+    }
+  }, []);
 
   const refresh = useCallback(() => {
     startRefreshTransition(() => {
@@ -91,14 +143,26 @@ export function LiveMonitorDashboard({
           if (!response.ok) {
             throw new Error("Live feed request failed.");
           }
-          setSnapshot(await response.json());
+          const nextSnapshot = (await response.json()) as DashboardSnapshot;
+          notifyForNewEvents(nextSnapshot.source_events);
+          setSnapshot(nextSnapshot);
           setConnectionError(null);
         })
         .catch(() => {
           setConnectionError("Live feed connection interrupted. Retrying.");
         });
     });
-  }, [startRefreshTransition]);
+  }, [notifyForNewEvents, startRefreshTransition]);
+
+  const enableBrowserNotifications = useCallback(async () => {
+    if (typeof window === "undefined" || !("Notification" in window)) {
+      setNotificationPermission("unsupported");
+      return;
+    }
+
+    const permission = await Notification.requestPermission();
+    setNotificationPermission(permission);
+  }, []);
 
   useEffect(() => {
     const timer = window.setInterval(refresh, 6000);
@@ -224,6 +288,25 @@ export function LiveMonitorDashboard({
         <div className="mt-3 flex items-center gap-2 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-950">
           <AlertTriangle aria-hidden className="h-4 w-4 shrink-0" />
           <span>{connectionError}</span>
+        </div>
+      ) : null}
+
+      {newEventNotice ? (
+        <div className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-md border border-teal-200 bg-teal-50 px-3 py-2 text-sm text-teal-950">
+          <div className="flex items-center gap-2">
+            <Bell aria-hidden className="h-4 w-4 shrink-0" />
+            <span>{newEventNotice}</span>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {notificationPermission === "default" ? (
+              <Button size="sm" variant="secondary" onClick={enableBrowserNotifications}>
+                Enable browser alerts
+              </Button>
+            ) : null}
+            <Button size="sm" variant="secondary" onClick={() => setNewEventNotice(null)}>
+              Dismiss
+            </Button>
+          </div>
         </div>
       ) : null}
 
@@ -749,7 +832,13 @@ function SourcePostCard({
     item.kind === "event" ? item.event.predicted_category : item.caseRecord.category;
   const severity =
     item.kind === "event" ? item.event.predicted_severity : item.caseRecord.severity;
-  const comments = item.kind === "event" ? item.event.comments : item.caseRecord.comments;
+  const rawComments =
+    item.kind === "event" ? item.event.comments : item.caseRecord.comments;
+  const comments = visibleComments(rawComments);
+  const mediaUrls =
+    item.kind === "event"
+      ? mediaUrlsForRecord(item.event)
+      : mediaUrlsForRecord(item.caseRecord);
   const sourceUrl = item.kind === "event" ? item.event.source_url : item.caseRecord.source_url;
   const status = sourcePostStatus(item);
   const target = sourcePostTarget(item);
@@ -774,10 +863,17 @@ function SourcePostCard({
           </div>
 
           <p className="mt-3 line-clamp-4 text-sm leading-5 text-slate-700">{text}</p>
+          <CompactMediaPreview urls={mediaUrls ?? []} />
 
           <div className="mt-3 flex flex-wrap items-center gap-2">
             <SeverityBadge severity={severity} />
             <Badge>{category}</Badge>
+            {mediaUrls?.length ? (
+              <span className="inline-flex h-6 items-center gap-1 rounded-md bg-slate-100 px-2 text-xs font-medium text-slate-700 ring-1 ring-border">
+                <ImageIcon aria-hidden className="h-3.5 w-3.5" />
+                {mediaUrls.length}
+              </span>
+            ) : null}
             {comments.length ? (
               <span className="inline-flex h-6 items-center gap-1 rounded-md bg-slate-100 px-2 text-xs font-medium text-slate-700 ring-1 ring-border">
                 <MessageCircle aria-hidden className="h-3.5 w-3.5" />
@@ -955,6 +1051,7 @@ function SourceEventRow({
             {event.post_title || event.predicted_category}
           </h3>
           <p className="mt-2 text-sm leading-6 text-slate-700">{text}</p>
+          <MediaPreview urls={mediaUrlsForRecord(event)} />
           <CommentAccordion comments={event.comments ?? []} />
           <div className="mt-3 flex flex-wrap gap-2 text-xs text-muted-foreground">
             <span>Source signal</span>
@@ -1049,6 +1146,7 @@ function CaseRow({
           <p className="mt-2 text-sm leading-6 text-slate-700">
             {record.post_text || record.redacted_text}
           </p>
+          <MediaPreview urls={mediaUrlsForRecord(record)} />
           <CommentAccordion comments={record.comments ?? []} />
           <div className="mt-3 flex flex-wrap gap-2 text-xs text-muted-foreground">
             <span>{location?.name ?? "Location pending"}</span>
@@ -1141,23 +1239,97 @@ function CaseRow({
 }
 
 function CommentAccordion({ comments }: { comments: string[] }) {
-  if (!comments.length) {
+  const displayComments = visibleComments(comments);
+
+  if (!displayComments.length) {
     return null;
   }
 
   return (
     <details className="mt-3 rounded-md border border-border bg-white">
       <summary className="cursor-pointer px-3 py-2 text-sm font-medium">
-        Comments ({comments.length})
+        Comments ({displayComments.length})
       </summary>
       <div className="divide-y divide-border">
-        {comments.map((comment, index) => (
+        {displayComments.map((comment, index) => (
           <p key={`${index}-${comment.slice(0, 16)}`} className="px-3 py-2 text-sm text-slate-700">
             {comment}
           </p>
         ))}
       </div>
     </details>
+  );
+}
+
+function visibleComments(comments: string[] = []) {
+  return comments.filter((comment) => !comment.trim().startsWith(mediaCommentPrefix));
+}
+
+function mediaUrlsForRecord(record: {
+  comments?: string[] | null;
+  media_urls?: string[] | null;
+}) {
+  const direct = Array.isArray(record.media_urls) ? record.media_urls : [];
+  const fromComments = (record.comments ?? [])
+    .map((comment) => comment.trim())
+    .filter((comment) => comment.startsWith(mediaCommentPrefix))
+    .map((comment) => comment.slice(mediaCommentPrefix.length).trim())
+    .filter(Boolean);
+
+  return [...new Set([...direct, ...fromComments])];
+}
+
+function CompactMediaPreview({ urls }: { urls: string[] }) {
+  const first = urls[0];
+  if (!first) {
+    return null;
+  }
+
+  return (
+    <a
+      className="mt-3 block overflow-hidden rounded-md border border-border bg-slate-100"
+      href={first}
+      rel="noreferrer"
+      target="_blank"
+    >
+      {/* eslint-disable-next-line @next/next/no-img-element -- Facebook CDN media is dynamic and cannot be configured safely for next/image. */}
+      <img
+        alt="Visible Facebook post attachment"
+        className="h-28 w-full object-cover"
+        loading="lazy"
+        referrerPolicy="no-referrer"
+        src={first}
+      />
+    </a>
+  );
+}
+
+function MediaPreview({ urls }: { urls: string[] }) {
+  if (!urls.length) {
+    return null;
+  }
+
+  return (
+    <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3">
+      {urls.slice(0, 6).map((url, index) => (
+        <a
+          key={`${index}-${url}`}
+          className="group overflow-hidden rounded-md border border-border bg-slate-100"
+          href={url}
+          rel="noreferrer"
+          target="_blank"
+        >
+          {/* eslint-disable-next-line @next/next/no-img-element -- Facebook CDN media is dynamic and cannot be configured safely for next/image. */}
+          <img
+            alt={`Visible Facebook post attachment ${index + 1}`}
+            className="aspect-[4/3] w-full object-cover transition group-hover:scale-[1.02]"
+            loading="lazy"
+            referrerPolicy="no-referrer"
+            src={url}
+          />
+        </a>
+      ))}
+    </div>
   );
 }
 
@@ -1441,7 +1613,8 @@ function exportCases(snapshot: DashboardSnapshot) {
       created_at: record.created_at,
       updated_at: record.updated_at,
       redacted_text: record.redacted_text,
-      comments: (record.comments ?? []).join(" | "),
+      comments: visibleComments(record.comments ?? []).join(" | "),
+      media_urls: mediaUrlsForRecord(record).join(" | "),
     }));
     const header = Object.keys(rows[0] ?? { id: "" });
     const csv = [

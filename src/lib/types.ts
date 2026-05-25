@@ -87,6 +87,7 @@ export type CaseRecord = {
   post_title: string | null;
   post_text: string | null;
   comments: string[];
+  media_urls: string[];
   text_hash: string;
   category: string;
   severity: Severity;
@@ -131,6 +132,7 @@ export type SourceEvent = {
   post_title: string | null;
   post_text: string | null;
   comments: string[];
+  media_urls: string[];
   text_hash: string;
   source_url: string | null;
   matched_keywords: string[];

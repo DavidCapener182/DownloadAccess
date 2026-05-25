@@ -31,6 +31,77 @@ function isActiveSource(source: Source | null | undefined) {
   return Boolean(source?.active && source?.approved_for_monitoring);
 }
 
+const mediaCommentPrefix = "[image] ";
+
+function mediaCommentMarkers(urls: string[]) {
+  return urls.map((url) => `${mediaCommentPrefix}${url}`);
+}
+
+function mediaUrlsFromComments(comments: unknown) {
+  if (!Array.isArray(comments)) {
+    return [];
+  }
+
+  return comments
+    .filter((comment): comment is string => typeof comment === "string")
+    .map((comment) => comment.trim())
+    .filter((comment) => comment.startsWith(mediaCommentPrefix))
+    .map((comment) => comment.slice(mediaCommentPrefix.length).trim())
+    .filter(Boolean);
+}
+
+function withFallbackMediaComments<
+  T extends { comments: string[]; media_urls: string[] },
+>(record: T) {
+  const { media_urls: mediaUrls, comments, ...rest } = record;
+  return {
+    ...rest,
+    comments: [...comments, ...mediaCommentMarkers(mediaUrls)],
+  };
+}
+
+function isMissingMediaUrlsColumn(error: unknown) {
+  if (!error || typeof error !== "object") {
+    return false;
+  }
+
+  const candidate = error as {
+    code?: string;
+    details?: string;
+    hint?: string;
+    message?: string;
+  };
+  const message = [
+    candidate.code,
+    candidate.message,
+    candidate.details,
+    candidate.hint,
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+
+  return message.includes("media_urls") && message.includes("column");
+}
+
+function normaliseCaseRecord(record: CaseRecord): CaseRecord {
+  return {
+    ...record,
+    media_urls: Array.isArray(record.media_urls)
+      ? record.media_urls
+      : mediaUrlsFromComments(record.comments),
+  };
+}
+
+function normaliseSourceEvent(record: SourceEvent): SourceEvent {
+  return {
+    ...record,
+    media_urls: Array.isArray(record.media_urls)
+      ? record.media_urls
+      : mediaUrlsFromComments(record.comments),
+  };
+}
+
 type NewSourceEvent = Omit<SourceEvent, "id" | "created_at">;
 type NewCase = Omit<CaseRecord, "id" | "created_at" | "updated_at" | "resolved_at">;
 type NewPublicReport = Omit<PublicReport, "id" | "created_at">;
@@ -501,6 +572,7 @@ class MemoryStore implements DataStore {
       post_text:
         "Demo signal: wheelchair stuck near Trackway East and cannot get out.",
       comments: [],
+      media_urls: [],
       text_hash:
         "demo-critical-wheelchair-stuck-trackway-east-cannot-get-out",
       category: "Mobility access",
@@ -536,6 +608,7 @@ class MemoryStore implements DataStore {
       post_text:
         "Demo signal: accessible toilet blocked at Accessible Toilets North.",
       comments: [],
+      media_urls: [],
       text_hash: "demo-high-accessible-toilet-blocked-north",
       category: "Accessible toilet",
       severity: "High",
@@ -621,9 +694,9 @@ class SupabaseStore implements DataStore {
     ]);
 
     return {
-      cases,
+      cases: cases.map(normaliseCaseRecord),
       alerts,
-      source_events: sourceEvents,
+      source_events: sourceEvents.map(normaliseSourceEvent),
       case_actions: caseActions,
       profiles,
       sources,
@@ -647,7 +720,7 @@ class SupabaseStore implements DataStore {
       .eq("text_hash", textHash)
       .maybeSingle();
     if (error) throw error;
-    return (data as CaseRecord | null) ?? null;
+    return data ? normaliseCaseRecord(data as CaseRecord) : null;
   }
 
   async getLocationIdByName(name: string | null) {
@@ -666,7 +739,7 @@ class SupabaseStore implements DataStore {
       .eq("id", eventId)
       .maybeSingle();
     if (error) throw error;
-    return (data as SourceEvent | null) ?? null;
+    return data ? normaliseSourceEvent(data as SourceEvent) : null;
   }
 
   async validateSourceToken(token: string | null) {
@@ -697,13 +770,32 @@ class SupabaseStore implements DataStore {
       .insert(event)
       .select()
       .single();
-    if (error) throw error;
-    await this.audit("source_event.created", "source_events", data.id, {
+    let created = data as SourceEvent | null;
+    if (error && isMissingMediaUrlsColumn(error)) {
+      const fallback = withFallbackMediaComments(event);
+      const retry = await this.table("source_events")
+        .insert(fallback)
+        .select()
+        .single();
+      if (retry.error) throw retry.error;
+      created = {
+        ...(retry.data as SourceEvent),
+        media_urls: event.media_urls,
+      };
+    } else if (error) {
+      throw error;
+    }
+
+    if (!created) {
+      throw new Error("Source event creation returned no data.");
+    }
+
+    await this.audit("source_event.created", "source_events", created.id, {
       severity: event.predicted_severity,
       source_id: event.source_id,
       ignored: event.ignored,
     });
-    return data as SourceEvent;
+    return normaliseSourceEvent(created);
   }
 
   async updateSourceEvent(
@@ -729,7 +821,7 @@ class SupabaseStore implements DataStore {
     if (error) throw error;
     if (!data) return null;
     await this.audit("source_event.updated", "source_events", eventId, updates);
-    return data as SourceEvent;
+    return normaliseSourceEvent(data as SourceEvent);
   }
 
   async createCase(record: NewCase) {
@@ -737,9 +829,26 @@ class SupabaseStore implements DataStore {
       .insert(record)
       .select()
       .single();
-    if (error) throw error;
+    let created = data as CaseRecord | null;
+    if (error && isMissingMediaUrlsColumn(error)) {
+      const fallback = withFallbackMediaComments(record);
+      const retry = await this.table("cases")
+        .insert(fallback)
+        .select()
+        .single();
+      if (retry.error) throw retry.error;
+      created = {
+        ...(retry.data as CaseRecord),
+        media_urls: record.media_urls,
+      };
+    } else if (error) {
+      throw error;
+    }
 
-    const created = data as CaseRecord;
+    if (!created) {
+      throw new Error("Case creation returned no data.");
+    }
+
     await this.table("case_status_history").insert({
       case_id: created.id,
       old_status: null,
@@ -752,7 +861,7 @@ class SupabaseStore implements DataStore {
       location_id: created.location_id,
     });
     await this.createAlertsForCase(created);
-    return created;
+    return normaliseCaseRecord(created);
   }
 
   async updateCase(
@@ -789,7 +898,7 @@ class SupabaseStore implements DataStore {
     }
 
     await this.audit("case.updated", "cases", caseId, updates);
-    return data as CaseRecord;
+    return normaliseCaseRecord(data as CaseRecord);
   }
 
   async addCaseAction(

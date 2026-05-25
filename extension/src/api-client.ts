@@ -19,6 +19,7 @@ export async function submitIssue(
       post_title: issue.title,
       post_text: issue.postText,
       comments: issue.comments,
+      media_urls: issue.mediaUrls,
       source_id: settings.sourceId || null,
       source_url: issue.sourceUrl,
       source_platform: "Browser",

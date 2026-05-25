@@ -30,6 +30,7 @@ async function handleMessage(message: {
   issue?: DetectedIssue;
   issueId?: string;
   submitNow?: boolean;
+  notify?: boolean;
 }) {
   if (message.type === "DETECTED_ISSUE" && message.issue) {
     const issue = await storeDetection(message.issue);
@@ -37,13 +38,16 @@ async function handleMessage(message: {
     if (message.submitNow || issue.severity === "Critical") {
       await submitDetection(issue.id);
       submitted = true;
-      if (issue.severity === "Critical") {
+      if (message.notify || issue.severity === "Critical") {
         try {
           await chrome.notifications.create({
             type: "basic",
             iconUrl: chrome.runtime.getURL("icon.svg"),
-            title: "Critical accessibility issue",
-            message: issue.redactedText.slice(0, 180),
+            title:
+              issue.severity === "Critical"
+                ? "Critical accessibility issue"
+                : "New monitored Facebook post",
+            message: (issue.title || issue.redactedText).slice(0, 180),
           });
         } catch {
           // Dashboard submission is the primary alert path; notification UI is best effort.

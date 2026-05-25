@@ -33,6 +33,7 @@ type SourceEventPayload = {
   post_title?: string | null;
   post_text?: string | null;
   comments?: unknown;
+  media_urls?: unknown;
   source_id?: string | null;
   source_url?: string | null;
   source_platform?: string | null;
@@ -109,6 +110,40 @@ function normalizeComments(value: unknown) {
     .slice(0, 20);
 }
 
+function normalizeMediaUrls(value: unknown) {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  const urls = new Set<string>();
+  for (const item of value) {
+    const rawUrl =
+      typeof item === "string"
+        ? item
+        : item &&
+            typeof item === "object" &&
+            "url" in item &&
+            typeof item.url === "string"
+          ? item.url
+          : "";
+
+    try {
+      const url = new URL(rawUrl.trim());
+      if (url.protocol === "https:" || url.protocol === "http:") {
+        urls.add(url.toString());
+      }
+    } catch {
+      // Ignore malformed or browser-local media URLs.
+    }
+
+    if (urls.size >= 8) {
+      break;
+    }
+  }
+
+  return [...urls];
+}
+
 function optionalText(value: unknown) {
   return typeof value === "string" && value.trim().length ? value.trim() : null;
 }
@@ -131,6 +166,7 @@ export async function ingestSourceEvent(
   }
 
   const comments = normalizeComments(payload.comments);
+  const mediaUrls = normalizeMediaUrls(payload.media_urls);
   const payloadPostText = optionalText(payload.post_text);
   const rawText = requireText(
     payload.raw_text ?? payload.text ?? composeStructuredText(payloadPostText ?? "", comments),
@@ -156,6 +192,7 @@ export async function ingestSourceEvent(
       post_title: redactedTitle,
       post_text: redactedPostText,
       comments: redactedComments,
+      media_urls: mediaUrls,
       text_hash: textHash,
       source_url: sourceUrl,
       matched_keywords: classification.matched_keywords,
@@ -183,6 +220,7 @@ export async function ingestSourceEvent(
     post_title: redactedTitle,
     post_text: redactedPostText,
     comments: redactedComments,
+    media_urls: mediaUrls,
     text_hash: textHash,
     source_url: sourceUrl,
     matched_keywords: classification.matched_keywords,
@@ -219,6 +257,7 @@ export async function ingestSourceEvent(
       post_title: redactedTitle,
       post_text: redactedPostText,
       comments: redactedComments,
+      media_urls: mediaUrls,
       text_hash: textHash,
       category: classification.category,
       severity: classification.severity,
@@ -277,6 +316,7 @@ export async function createCaseFromPublicReport(payload: PublicReportPayload) {
     post_title: issueType,
     post_text: redactOperationalText(reportText),
     comments: [],
+    media_urls: [],
     text_hash: textHash,
     category:
       classification.category === "Unclassified" ? issueType : classification.category,
@@ -338,6 +378,7 @@ export async function createManualCase(payload: ManualCasePayload) {
     post_title: payload.title?.trim() || classification.title,
     post_text: classification.redacted_text,
     comments: [],
+    media_urls: [],
     text_hash: hashText(`manual:${text}`),
     category: payload.category?.trim() || classification.category,
     severity,
@@ -476,6 +517,7 @@ export async function reviewSourceEvent(
     post_title: event.post_title,
     post_text: event.post_text,
     comments: event.comments,
+    media_urls: event.media_urls,
     text_hash: event.text_hash,
     category: event.predicted_category,
     severity,
