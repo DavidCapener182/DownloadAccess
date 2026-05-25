@@ -1032,10 +1032,13 @@ function SourceEventRow({
   onReview: (payload: Record<string, unknown>) => Promise<void>;
 }) {
   const [busy, startTransition] = useTransition();
+  const [expanded, setExpanded] = useState(false);
   const severityForEscalation =
     event.predicted_severity === "Low" ? "Medium" : event.predicted_severity;
   const text = event.post_text || event.redacted_text;
   const lane = operationalLane(event);
+  const comments = visibleComments(event.comments ?? []);
+  const mediaUrls = mediaUrlsForRecord(event);
 
   return (
     <article id={`source-event-${event.id}`} className="scroll-mt-24 p-4">
@@ -1050,9 +1053,29 @@ function SourceEventRow({
           <h3 className="mt-3 text-base font-semibold">
             {event.post_title || event.predicted_category}
           </h3>
-          <p className="mt-2 text-sm leading-6 text-slate-700">{text}</p>
-          <MediaPreview urls={mediaUrlsForRecord(event)} />
-          <CommentAccordion comments={event.comments ?? []} />
+          <p
+            className={cn(
+              "mt-2 whitespace-pre-wrap break-words text-sm leading-6 text-slate-700",
+              !expanded && "line-clamp-3",
+            )}
+          >
+            {text}
+          </p>
+          {!expanded && (comments.length || mediaUrls.length || text.length > 220) ? (
+            <p className="mt-2 text-xs font-medium text-muted-foreground">
+              Open full post to view the complete captured text
+              {comments.length ? ` and ${comments.length} comment${comments.length === 1 ? "" : "s"}` : ""}
+              .
+            </p>
+          ) : null}
+          {expanded ? (
+            <FullSourceEventDetail
+              comments={comments}
+              event={event}
+              mediaUrls={mediaUrls}
+              postText={text}
+            />
+          ) : null}
           <div className="mt-3 flex flex-wrap gap-2 text-xs text-muted-foreground">
             <span>Source signal</span>
             <span>{event.classification_reason ?? "Awaiting review"}</span>
@@ -1060,6 +1083,14 @@ function SourceEventRow({
           </div>
         </div>
         <div className="flex min-w-52 flex-col gap-2">
+          <Button
+            variant="secondary"
+            disabled={busy}
+            onClick={() => setExpanded((value) => !value)}
+          >
+            <Eye aria-hidden className="h-4 w-4" />
+            {expanded ? "Hide full post" : "Full post & comments"}
+          </Button>
           <Button
             variant="secondary"
             disabled={busy}
@@ -1104,6 +1135,97 @@ function SourceEventRow({
         </div>
       </div>
     </article>
+  );
+}
+
+function FullSourceEventDetail({
+  comments,
+  event,
+  mediaUrls,
+  postText,
+}: {
+  comments: string[];
+  event: SourceEvent;
+  mediaUrls: string[];
+  postText: string;
+}) {
+  const capturedText =
+    event.redacted_text && event.redacted_text !== postText
+      ? event.redacted_text
+      : null;
+
+  return (
+    <div className="mt-3 rounded-md border border-border bg-slate-50">
+      <div className="border-b border-border bg-white px-3 py-3">
+        <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+          Full post
+        </p>
+        <p className="mt-2 whitespace-pre-wrap break-words text-sm leading-6 text-slate-800">
+          {postText}
+        </p>
+      </div>
+
+      {mediaUrls.length ? (
+        <div className="border-b border-border px-3 py-3">
+          <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+            Images ({mediaUrls.length})
+          </p>
+          <MediaPreview urls={mediaUrls} />
+        </div>
+      ) : null}
+
+      {comments.length ? (
+        <details className="border-b border-border bg-white" open>
+          <summary className="cursor-pointer px-3 py-2 text-sm font-semibold">
+            Comments ({comments.length})
+          </summary>
+          <div className="divide-y divide-border">
+            {comments.map((comment, index) => (
+              <div
+                key={`${index}-${comment.slice(0, 16)}`}
+                className="grid gap-1 px-3 py-2"
+              >
+                <span className="text-xs font-medium text-muted-foreground">
+                  Comment {index + 1}
+                </span>
+                <p className="whitespace-pre-wrap break-words text-sm leading-6 text-slate-700">
+                  {comment}
+                </p>
+              </div>
+            ))}
+          </div>
+        </details>
+      ) : (
+        <div className="border-b border-border px-3 py-3 text-sm text-muted-foreground">
+          No visible comments captured for this post.
+        </div>
+      )}
+
+      {capturedText ? (
+        <details className="border-b border-border bg-white">
+          <summary className="cursor-pointer px-3 py-2 text-sm font-semibold">
+            Captured source text
+          </summary>
+          <p className="px-3 pb-3 whitespace-pre-wrap break-words text-sm leading-6 text-slate-700">
+            {capturedText}
+          </p>
+        </details>
+      ) : null}
+
+      {event.source_url ? (
+        <div className="px-3 py-3">
+          <a
+            className="inline-flex h-8 items-center gap-1 rounded-md px-2 text-xs font-medium text-teal-800 hover:bg-teal-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+            href={event.source_url}
+            rel="noreferrer"
+            target="_blank"
+          >
+            <ExternalLink aria-hidden className="h-3.5 w-3.5" />
+            Open Facebook source
+          </a>
+        </div>
+      ) : null}
+    </div>
   );
 }
 
