@@ -149,6 +149,10 @@ function optionalText(value: unknown) {
   return typeof value === "string" && value.trim().length ? value.trim() : null;
 }
 
+function isSpecificCaptureSourceUrl(sourceUrl?: string | null) {
+  return Boolean(sourceUrl && /\/posts\/|\/permalink\/|story_fbid=/i.test(sourceUrl));
+}
+
 function composeStructuredText(postText: string, comments: string[]) {
   return [postText, ...comments.map((comment) => `Comment: ${comment}`)]
     .filter(Boolean)
@@ -200,20 +204,53 @@ export async function ingestSourceEvent(
   const redactedComments = comments.map(redactOperationalText);
   const redactedTitle =
     postTitle ? redactOperationalText(postTitle) : summariseForTitle(redactedPostText);
+  const sourceEventCapture = {
+    raw_text: rawText,
+    redacted_text: classification.redacted_text,
+    post_title: redactedTitle,
+    post_text: redactedPostText,
+    comments: redactedComments,
+    media_urls: mediaUrls,
+    text_hash: textHash,
+    source_url: sourceUrl,
+    matched_keywords: classification.matched_keywords,
+    predicted_category: classification.category,
+    predicted_severity: classification.severity,
+    relevance: classification.relevance,
+    classification_reason: classification.reason,
+  };
 
-  const duplicateEvent = await store.findDuplicateSourceEvent(textHash);
+  const duplicateEvent = await store.findDuplicateSourceEvent(
+    textHash,
+    source.id,
+    sourceUrl,
+    redactedTitle,
+  );
   if (duplicateEvent) {
     const mergedComments = mergeTextList(duplicateEvent.comments ?? [], redactedComments);
     const mergedMediaUrls = mergeTextList(duplicateEvent.media_urls ?? [], mediaUrls);
-    const updatedEvent =
-      mergedComments.length !== (duplicateEvent.comments ?? []).length ||
-      mergedMediaUrls.length !== (duplicateEvent.media_urls ?? []).length
-        ? await store.updateSourceEventMedia(
-            duplicateEvent.id,
-            mergedComments,
-            mergedMediaUrls,
-          )
-        : duplicateEvent;
+    const incomingIsRicher = rawText.length >= duplicateEvent.raw_text.length;
+    const updatedEvent = await store.updateSourceEventCapture(duplicateEvent.id, {
+      ...(incomingIsRicher
+        ? sourceEventCapture
+        : {
+            raw_text: duplicateEvent.raw_text,
+            redacted_text: duplicateEvent.redacted_text,
+            post_title: duplicateEvent.post_title,
+            post_text: duplicateEvent.post_text,
+            text_hash: duplicateEvent.text_hash,
+            source_url: isSpecificCaptureSourceUrl(sourceUrl)
+              ? sourceUrl
+              : duplicateEvent.source_url ?? sourceUrl,
+            matched_keywords: duplicateEvent.matched_keywords,
+            predicted_category: duplicateEvent.predicted_category,
+            predicted_severity: duplicateEvent.predicted_severity,
+            relevance: duplicateEvent.relevance,
+            classification_reason: duplicateEvent.classification_reason,
+          }),
+      comments: mergedComments,
+      media_urls: mergedMediaUrls,
+    });
 
     return {
       event: updatedEvent ?? duplicateEvent,
@@ -226,19 +263,7 @@ export async function ingestSourceEvent(
   if (duplicate) {
     const event = await store.createSourceEvent({
       source_id: source.id,
-      raw_text: rawText,
-      redacted_text: classification.redacted_text,
-      post_title: redactedTitle,
-      post_text: redactedPostText,
-      comments: redactedComments,
-      media_urls: mediaUrls,
-      text_hash: textHash,
-      source_url: sourceUrl,
-      matched_keywords: classification.matched_keywords,
-      predicted_category: classification.category,
-      predicted_severity: classification.severity,
-      relevance: classification.relevance,
-      classification_reason: classification.reason,
+      ...sourceEventCapture,
       review_status: "Ignored",
       review_note: null,
       acknowledged_by: null,
@@ -256,19 +281,7 @@ export async function ingestSourceEvent(
   let createdCase: CaseRecord | null = null;
   let event = await store.createSourceEvent({
     source_id: source.id,
-    raw_text: rawText,
-    redacted_text: classification.redacted_text,
-    post_title: redactedTitle,
-    post_text: redactedPostText,
-    comments: redactedComments,
-    media_urls: mediaUrls,
-    text_hash: textHash,
-    source_url: sourceUrl,
-    matched_keywords: classification.matched_keywords,
-    predicted_category: classification.category,
-    predicted_severity: classification.severity,
-    relevance: classification.relevance,
-    classification_reason: classification.reason,
+    ...sourceEventCapture,
     review_status: "New",
     review_note: null,
     acknowledged_by: null,

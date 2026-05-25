@@ -114,6 +114,10 @@ async function backfillVisiblePosts(): Promise<BackfillResult> {
   await start();
 
   const candidates = collectCandidateContainers();
+  for (const candidate of candidates) {
+    await expandVisiblePostBody(candidate);
+  }
+
   const structuredPosts = uniqueStructuredPosts([
     ...candidates
       .map(extractStructuredPost)
@@ -173,6 +177,8 @@ async function inspectNode(
   if (!isVisible(node)) {
     return "skipped";
   }
+
+  await expandVisiblePostBody(node);
 
   const structured = extractStructuredPost(node);
   if (!structured) {
@@ -363,7 +369,7 @@ function extractStructuredPost(node: HTMLElement): StructuredPost | null {
   const mediaUrls = extractMediaUrls(container);
   const combinedText = composeCombinedText(postText, comments);
 
-  if (combinedText.length < 24 || combinedText.length > 2400) {
+  if (combinedText.length < 24 || combinedText.length > 8000) {
     return null;
   }
 
@@ -379,6 +385,38 @@ function extractStructuredPost(node: HTMLElement): StructuredPost | null {
     combinedText,
     sourceUrl: extractSourceUrl(container),
   };
+}
+
+async function expandVisiblePostBody(node: HTMLElement) {
+  const container = node.closest<HTMLElement>('article,[role="article"]') ?? node;
+  const firstComment = container.querySelector<HTMLElement>(commentSelector);
+  const controls = [
+    ...container.querySelectorAll<HTMLElement>(
+      'button,[role="button"],div[tabindex="0"],span[tabindex="0"]',
+    ),
+  ].filter((element) => {
+    const label = (
+      element.innerText ||
+      element.getAttribute("aria-label") ||
+      element.getAttribute("title") ||
+      ""
+    )
+      .replace(/\s+/g, " ")
+      .trim();
+
+    return (
+      /^see more$/i.test(label) &&
+      isVisible(element) &&
+      !isInsideCommentContainer(element) &&
+      isBeforeFirstComment(element, firstComment) &&
+      !isPostActionButton(element)
+    );
+  });
+
+  for (const control of controls.slice(0, 3)) {
+    control.click();
+    await wait(150);
+  }
 }
 
 function extractMediaUrls(container: HTMLElement) {
@@ -495,7 +533,7 @@ function extractPostBody(container: HTMLElement) {
     }
   }
 
-  return bodyLines.slice(0, 10).join("\n");
+  return bodyLines.slice(0, 40).join("\n");
 }
 
 function extractComments(container: HTMLElement) {
@@ -858,7 +896,7 @@ function extractPostTextFromLines(lines: string[]) {
       bodyLines.push(line);
     }
 
-    if (bodyLines.join(" ").length > 900) {
+    if (bodyLines.join(" ").length > 6000) {
       break;
     }
   }
@@ -955,9 +993,13 @@ function isLikelyPageShell(text: string) {
   return facebookWords > 8 || facebookWords / Math.max(words.length, 1) > 0.12;
 }
 
+function wait(milliseconds: number) {
+  return new Promise((resolve) => window.setTimeout(resolve, milliseconds));
+}
+
 function looksLikePostContainer(element: HTMLElement) {
   const text = element.innerText?.replace(/\s+/g, " ").trim() ?? "";
-  if (text.length < 24 || text.length > 3200 || isLikelyPageShell(text)) {
+  if (text.length < 24 || text.length > 9000 || isLikelyPageShell(text)) {
     return false;
   }
 

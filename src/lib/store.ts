@@ -85,6 +85,25 @@ function isMissingMediaUrlsColumn(error: unknown) {
   return message.includes("media_urls") && message.includes("column");
 }
 
+function isSpecificSourceUrl(sourceUrl?: string | null) {
+  if (!sourceUrl) {
+    return false;
+  }
+
+  return /\/posts\/|\/permalink\/|story_fbid=/i.test(sourceUrl);
+}
+
+function isSpecificPostTitle(title?: string | null) {
+  const normalised = title?.replace(/\s+/g, " ").trim() ?? "";
+  if (normalised.length < 24) {
+    return false;
+  }
+
+  return !/^(follow|hello!?|hi all\.?|anonymous participant: hello!?)$/i.test(
+    normalised,
+  );
+}
+
 function normaliseCaseRecord(record: CaseRecord): CaseRecord {
   return {
     ...record,
@@ -104,6 +123,22 @@ function normaliseSourceEvent(record: SourceEvent): SourceEvent {
 }
 
 type NewSourceEvent = Omit<SourceEvent, "id" | "created_at">;
+type SourceEventCaptureUpdate = Pick<
+  NewSourceEvent,
+  | "raw_text"
+  | "redacted_text"
+  | "post_title"
+  | "post_text"
+  | "comments"
+  | "media_urls"
+  | "text_hash"
+  | "source_url"
+  | "matched_keywords"
+  | "predicted_category"
+  | "predicted_severity"
+  | "relevance"
+  | "classification_reason"
+>;
 type NewCase = Omit<CaseRecord, "id" | "created_at" | "updated_at" | "resolved_at">;
 type NewPublicReport = Omit<PublicReport, "id" | "created_at">;
 
@@ -111,7 +146,12 @@ export interface DataStore {
   listDashboard(): Promise<DashboardSnapshot>;
   listLocations(): Promise<SiteLocation[]>;
   findDuplicateCase(textHash: string): Promise<CaseRecord | null>;
-  findDuplicateSourceEvent(textHash: string): Promise<SourceEvent | null>;
+  findDuplicateSourceEvent(
+    textHash: string,
+    sourceId?: string | null,
+    sourceUrl?: string | null,
+    postTitle?: string | null,
+  ): Promise<SourceEvent | null>;
   getLocationIdByName(name: string | null): Promise<string | null>;
   getSourceEvent(id: string): Promise<SourceEvent | null>;
   validateSourceToken(
@@ -142,6 +182,10 @@ export interface DataStore {
     id: string,
     comments: string[],
     mediaUrls: string[],
+  ): Promise<SourceEvent | null>;
+  updateSourceEventCapture(
+    id: string,
+    updates: SourceEventCaptureUpdate,
   ): Promise<SourceEvent | null>;
   createCase(record: NewCase): Promise<CaseRecord>;
   updateCase(
@@ -202,8 +246,36 @@ class MemoryStore implements DataStore {
     return this.cases.find((record) => record.text_hash === textHash) ?? null;
   }
 
-  async findDuplicateSourceEvent(textHash: string) {
-    return this.sourceEvents.find((event) => event.text_hash === textHash) ?? null;
+  async findDuplicateSourceEvent(
+    textHash: string,
+    sourceId?: string | null,
+    sourceUrl?: string | null,
+    postTitle?: string | null,
+  ) {
+    const newestEvents = [...this.sourceEvents].sort(sortByNewest);
+    const byHash = newestEvents.find((event) => event.text_hash === textHash);
+    if (byHash) {
+      return byHash;
+    }
+
+    if (sourceId && isSpecificSourceUrl(sourceUrl)) {
+      const byUrl = newestEvents.find(
+        (event) => event.source_id === sourceId && event.source_url === sourceUrl,
+      );
+      if (byUrl) {
+        return byUrl;
+      }
+    }
+
+    if (sourceId && isSpecificPostTitle(postTitle)) {
+      return (
+        newestEvents.find(
+          (event) => event.source_id === sourceId && event.post_title === postTitle,
+        ) ?? null
+      );
+    }
+
+    return null;
   }
 
   async getLocationIdByName(name: string | null) {
@@ -332,6 +404,24 @@ class MemoryStore implements DataStore {
     this.audit("source_event.media_updated", "source_events", target.id, {
       comments: comments.length,
       media_urls: mediaUrls.length,
+    });
+    return target;
+  }
+
+  async updateSourceEventCapture(
+    eventId: string,
+    updates: SourceEventCaptureUpdate,
+  ) {
+    const target = this.sourceEvents.find((event) => event.id === eventId);
+    if (!target) {
+      return null;
+    }
+
+    Object.assign(target, updates);
+    this.audit("source_event.capture_updated", "source_events", target.id, {
+      raw_text_length: updates.raw_text.length,
+      comments: updates.comments.length,
+      media_urls: updates.media_urls.length,
     });
     return target;
   }
@@ -802,7 +892,12 @@ class SupabaseStore implements DataStore {
     return data ? normaliseCaseRecord(data as CaseRecord) : null;
   }
 
-  async findDuplicateSourceEvent(textHash: string) {
+  async findDuplicateSourceEvent(
+    textHash: string,
+    sourceId?: string | null,
+    sourceUrl?: string | null,
+    postTitle?: string | null,
+  ) {
     const { data, error } = await this.table("source_events")
       .select("*")
       .eq("text_hash", textHash)
@@ -810,7 +905,39 @@ class SupabaseStore implements DataStore {
       .limit(1)
       .maybeSingle();
     if (error) throw error;
-    return data ? normaliseSourceEvent(data as SourceEvent) : null;
+    if (data) {
+      return normaliseSourceEvent(data as SourceEvent);
+    }
+
+    if (sourceId && isSpecificSourceUrl(sourceUrl)) {
+      const byUrl = await this.table("source_events")
+        .select("*")
+        .eq("source_id", sourceId)
+        .eq("source_url", sourceUrl)
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (byUrl.error) throw byUrl.error;
+      if (byUrl.data) {
+        return normaliseSourceEvent(byUrl.data as SourceEvent);
+      }
+    }
+
+    if (sourceId && isSpecificPostTitle(postTitle)) {
+      const byTitle = await this.table("source_events")
+        .select("*")
+        .eq("source_id", sourceId)
+        .eq("post_title", postTitle)
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (byTitle.error) throw byTitle.error;
+      if (byTitle.data) {
+        return normaliseSourceEvent(byTitle.data as SourceEvent);
+      }
+    }
+
+    return null;
   }
 
   async getLocationIdByName(name: string | null) {
@@ -1019,6 +1146,44 @@ class SupabaseStore implements DataStore {
     await this.audit("source_event.media_updated", "source_events", eventId, {
       comments: comments.length,
       media_urls: mediaUrls.length,
+    });
+    return normaliseSourceEvent(updated);
+  }
+
+  async updateSourceEventCapture(
+    eventId: string,
+    updates: SourceEventCaptureUpdate,
+  ) {
+    const { data, error } = await this.table("source_events")
+      .update(updates)
+      .eq("id", eventId)
+      .select()
+      .maybeSingle();
+    let updated = data as SourceEvent | null;
+
+    if (error && isMissingMediaUrlsColumn(error)) {
+      const retry = await this.table("source_events")
+        .update(withFallbackMediaComments(updates))
+        .eq("id", eventId)
+        .select()
+        .maybeSingle();
+      if (retry.error) throw retry.error;
+      updated = {
+        ...(retry.data as SourceEvent),
+        media_urls: updates.media_urls,
+      };
+    } else if (error) {
+      throw error;
+    }
+
+    if (!updated) {
+      return null;
+    }
+
+    await this.audit("source_event.capture_updated", "source_events", eventId, {
+      raw_text_length: updates.raw_text.length,
+      comments: updates.comments.length,
+      media_urls: updates.media_urls.length,
     });
     return normaliseSourceEvent(updated);
   }
